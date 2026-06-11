@@ -69,8 +69,31 @@ def _diagnosis_payload(diagnosis: Diagnosis) -> dict:
     }
 
 
+def _review_timestamps(session: Session, exam: Exam) -> tuple[Optional[datetime], Optional[datetime]]:
+    if exam.status_validation == "nao_validado":
+        return None, None
+
+    reviews = session.exec(
+        select(Review).where(Review.exam_id == exam.id).order_by(Review.created_at)
+    ).all()
+
+    if exam.status_validation == "em_validacao":
+        started_at = next(
+            (review.created_at for review in reviews if review.status_after == "em_validacao"),
+            None,
+        )
+        return started_at, None
+
+    completed_at = next(
+        (review.created_at for review in reversed(reviews) if review.status_after == "valido"),
+        None,
+    )
+    return None, completed_at
+
+
 def _exam_payload(session: Session, exam: Exam, include_details: bool = False) -> dict:
     patient = session.get(Patient, exam.patient_id)
+    started_at, completed_at = _review_timestamps(session, exam)
     payload = {
         "id": exam.id,
         "exam_code": exam.exam_code,
@@ -82,6 +105,8 @@ def _exam_payload(session: Session, exam: Exam, include_details: bool = False) -
         "image_url": exam.image_url,
         "created_at": exam.created_at,
         "updated_at": exam.updated_at,
+        "started_at": started_at,
+        "completed_at": completed_at,
         "patient": _patient_payload(patient),
     }
 
@@ -146,8 +171,6 @@ def list_exams(
     results = []
 
     for exam in exams:
-        patient = session.get(Patient, exam.patient_id)
-
         if status_filter and exam.status_validation != status_filter:
             continue
         if category and exam.category != category:
@@ -161,7 +184,7 @@ def list_exams(
         if source == "reviewed" and exam.status_validation != "valido":
             continue
         if normalized_search:
-            haystack = f"{exam.id} {exam.exam_code} {patient.name}".lower()
+            haystack = f"{exam.id} {exam.exam_code}".lower()
             if normalized_search not in haystack:
                 continue
 
@@ -190,10 +213,21 @@ def update_exam_status(
         )
 
     exam = _get_exam_or_404(session, exam_id)
+    status_before = exam.status_validation
     exam.status_validation = payload.status_validation
     exam.review_result = None
     exam.updated_at = datetime.utcnow()
     session.add(exam)
+    if status_before != payload.status_validation:
+        session.add(
+            Review(
+                exam_id=exam.id,
+                doctor_name="Dr. João",
+                status_before=status_before,
+                status_after=payload.status_validation,
+                created_at=exam.updated_at,
+            )
+        )
     session.commit()
     session.refresh(exam)
     return _exam_payload(session, exam, include_details=True)
@@ -296,7 +330,7 @@ def validate_exam(
 @app.get("/dashboard/stats")
 def dashboard_stats(session: Session = Depends(get_session)) -> dict:
     exams = session.exec(select(Exam)).all()
-    reviews = session.exec(select(Review)).all()
+    reviews = session.exec(select(Review).where(Review.status_after == "valido")).all()
     now = datetime.utcnow()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = now - timedelta(days=7)
