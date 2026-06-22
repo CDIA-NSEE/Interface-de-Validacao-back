@@ -16,6 +16,7 @@ class Patient(SQLModel, table=True):
     weight: float
     height: float
     bmi: float
+    birth_date: Optional[str] = None
 
 
 class Exam(SQLModel, table=True):
@@ -30,6 +31,11 @@ class Exam(SQLModel, table=True):
     status_validation: str = Field(default="nao_validado", index=True)
     review_result: Optional[str] = Field(default=None, index=True)
     image_url: str = Field(default="/sample-ecg.svg")
+    metadata_id: Optional[int] = Field(default=None, index=True)
+    metadata_hash: Optional[str] = Field(default=None, index=True)
+    exam_time: Optional[str] = None
+    comments: Optional[str] = None
+    source_notes: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -40,6 +46,8 @@ class Diagnosis(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     exam_id: int = Field(foreign_key="exams.id", index=True)
     name: str
+    source: str = Field(default="original")
+    review_status: str = Field(default="pending")
     is_abnormal: bool = Field(default=False)
     region_x: Optional[float] = None
     region_y: Optional[float] = None

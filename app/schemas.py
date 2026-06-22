@@ -16,8 +16,11 @@ class DiagnosisCreate(BaseModel):
     region_height: Optional[float] = None
 
 
+class DiagnosisReview(BaseModel):
+    review_status: Literal["confirmed", "rejected"]
+
+
 class ExamValidate(BaseModel):
     review_result: Literal["sem_alteracao", "alterado"]
     notes: Optional[str] = None
     doctor_name: str = "Dr. João"
-

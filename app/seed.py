@@ -2,15 +2,128 @@ from datetime import datetime, timedelta
 
 from sqlmodel import Session, select
 
+from app.metadata_source import conclusion_items, load_metadata_records
 from app.models import Diagnosis, Exam, Patient, Review
 
 
 SIMULATED_CATEGORIES = {"Rotina", "Ambulatorial", "Ocupacional", "Emergencia"}
 SIMULATED_EXAM_TYPES = {"ECG seriado", "ECG pre-operatorio"}
+SIMULATED_EXAM_CODES = {
+    "A03B5F",
+    "43DA34",
+    "A9FF32",
+    "F3B234",
+    "C91A77",
+    "B18C22",
+    "D77E90",
+    "E10F45",
+    "AA1209",
+    "BB4421",
+    "C0DE15",
+    "FF210A",
+}
 
 
 def _bmi(weight: float, height: float) -> float:
+    if not weight or not height:
+        return 0
+    if height > 3:
+        height /= 100
     return round(weight / (height * height), 1)
+
+
+def _parse_date(value: str) -> datetime:
+    return datetime.strptime(value, "%d/%m/%Y")
+
+
+def _is_abnormal(diagnosis: str) -> bool:
+    return diagnosis not in {
+        "RITMO SINUSAL",
+        "ELETROCARDIOGRAMA DENTRO DOS LIMITES DA NORMALIDADE",
+    }
+
+
+def _remove_simulated_data(session: Session) -> None:
+    exams = session.exec(select(Exam).where(Exam.exam_code.in_(SIMULATED_EXAM_CODES))).all()
+    exam_ids = {exam.id for exam in exams}
+    patient_ids = {exam.patient_id for exam in exams}
+
+    for diagnosis in session.exec(select(Diagnosis).where(Diagnosis.exam_id.in_(exam_ids))).all():
+        session.delete(diagnosis)
+    for review in session.exec(select(Review).where(Review.exam_id.in_(exam_ids))).all():
+        session.delete(review)
+    for exam in exams:
+        session.delete(exam)
+    for patient in session.exec(select(Patient).where(Patient.id.in_(patient_ids))).all():
+        session.delete(patient)
+    session.commit()
+
+
+def _import_metadata_database(session: Session) -> bool:
+    records = load_metadata_records()
+    if not records:
+        return False
+
+    imported_hashes = set(session.exec(select(Exam.metadata_hash)).all())
+    if not any(imported_hashes):
+        _remove_simulated_data(session)
+        imported_hashes.clear()
+
+    for record in records:
+        if record["hash"] in imported_hashes:
+            continue
+
+        weight = record["weight"] if record["weight_flag"] and record["weight"] else 0
+        height = record["height"] if record["height_flag"] and record["height"] else 0
+        patient = Patient(
+            name="",
+            birth_date=record["birth_date"] if record["birth_date_flag"] else None,
+            age=record["age"] if record["age_flag"] and record["age"] else 0,
+            sex=record["sex"] if record["sex_flag"] else "",
+            weight=weight,
+            height=height,
+            bmi=_bmi(weight, height),
+        )
+        session.add(patient)
+        session.commit()
+        session.refresh(patient)
+
+        exam_datetime = _parse_date(record["exam_date"])
+        exam = Exam(
+            exam_code=record["hash"][:8].upper(),
+            patient_id=patient.id,
+            exam_date=exam_datetime.date(),
+            exam_time=record["exam_time"] if record["exam_time_flag"] else None,
+            category="ECG",
+            exam_type="ECG repouso",
+            status_validation="nao_validado",
+            image_url="/sample-ecg.svg",
+            metadata_id=record["id"],
+            metadata_hash=record["hash"],
+            comments=record["comments"] if record["comments_flag"] else None,
+            source_notes=record["notes"] if record["notes_flag"] else None,
+            created_at=exam_datetime,
+            updated_at=exam_datetime,
+        )
+        session.add(exam)
+        session.commit()
+        session.refresh(exam)
+
+        if record["conclusions_flag"]:
+            for diagnosis_name in conclusion_items(record["conclusions"]):
+                session.add(
+                    Diagnosis(
+                        exam_id=exam.id,
+                        name=diagnosis_name,
+                        source="original",
+                        review_status="pending",
+                        is_abnormal=_is_abnormal(diagnosis_name),
+                        created_at=exam_datetime,
+                    )
+                )
+        session.commit()
+
+    return True
 
 
 def _normalize_simulated_metadata(session: Session) -> None:
@@ -34,6 +147,9 @@ def _normalize_simulated_metadata(session: Session) -> None:
 
 
 def seed_database(session: Session) -> None:
+    if _import_metadata_database(session):
+        return
+
     existing_exam = session.exec(select(Exam)).first()
     if existing_exam:
         _normalize_simulated_metadata(session)
