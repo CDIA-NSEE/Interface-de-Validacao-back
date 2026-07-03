@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import desc
 from sqlmodel import Session, select
 
+from app.auth import authenticate_user, create_access_token, get_current_active_user
 from app.database import (
     create_db_and_tables,
     engine,
@@ -15,8 +16,16 @@ from app.database import (
     should_reset_database_on_startup,
 )
 from app.metadata_source import load_diagnosis_options
-from app.models import Diagnosis, Exam, Patient, Review
-from app.schemas import DiagnosisCreate, DiagnosisReview, ExamValidate, StatusUpdate
+from app.models import Diagnosis, Exam, Patient, Review, User
+from app.schemas import (
+    DiagnosisCreate,
+    DiagnosisReview,
+    ExamValidate,
+    LoginRequest,
+    StatusUpdate,
+    TokenResponse,
+    UserRead,
+)
 from app.seed import seed_database
 
 
@@ -47,8 +56,12 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:5175",
+        "http://127.0.0.1:5175",
     ],
-    allow_origin_regex=r"^http://192\.168\.\d{1,3}\.\d{1,3}:5173$",
+    allow_origin_regex=r"^http://192\.168\.\d{1,3}\.\d{1,3}:517[3-5]$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -158,6 +171,36 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+def _user_read(user: User) -> UserRead:
+    return UserRead(
+        id=user.id,
+        username=user.username,
+        full_name=user.full_name,
+        is_active=user.is_active,
+    )
+
+
+@app.post("/auth/login", response_model=TokenResponse)
+def login(payload: LoginRequest, session: Session = Depends(get_session)) -> TokenResponse:
+    user = authenticate_user(session, payload.username, payload.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Usuário ou senha inválidos.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return TokenResponse(
+        access_token=create_access_token(user.username),
+        user=_user_read(user),
+    )
+
+
+@app.get("/auth/me", response_model=UserRead)
+def read_current_user(current_user: User = Depends(get_current_active_user)) -> UserRead:
+    return _user_read(current_user)
+
+
 @app.get("/exams")
 def list_exams(
     status_filter: Optional[str] = Query(default=None, alias="status"),
@@ -166,6 +209,7 @@ def list_exams(
     source: Optional[str] = None,
     review_result: Optional[str] = None,
     search: Optional[str] = None,
+    current_user: User = Depends(get_current_active_user),
     session: Session = Depends(get_session),
 ) -> list[dict]:
     if status_filter:
@@ -211,13 +255,17 @@ def list_exams(
 
 
 @app.get("/exams/{exam_id}")
-def get_exam(exam_id: int, session: Session = Depends(get_session)) -> dict:
+def get_exam(
+    exam_id: int,
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+) -> dict:
     exam = _get_exam_or_404(session, exam_id)
     return _exam_payload(session, exam, include_details=True)
 
 
 @app.get("/diagnosis-options")
-def diagnosis_options() -> list[str]:
+def diagnosis_options(current_user: User = Depends(get_current_active_user)) -> list[str]:
     return load_diagnosis_options()
 
 
@@ -225,6 +273,7 @@ def diagnosis_options() -> list[str]:
 def update_exam_status(
     exam_id: int,
     payload: StatusUpdate,
+    current_user: User = Depends(get_current_active_user),
     session: Session = Depends(get_session),
 ) -> dict:
     _validate_status(payload.status_validation)
@@ -244,7 +293,7 @@ def update_exam_status(
         session.add(
             Review(
                 exam_id=exam.id,
-                doctor_name="Dr. João",
+                doctor_name=current_user.full_name,
                 status_before=status_before,
                 status_after=payload.status_validation,
                 created_at=exam.updated_at,
@@ -259,6 +308,7 @@ def update_exam_status(
 def add_diagnosis(
     exam_id: int,
     payload: DiagnosisCreate,
+    current_user: User = Depends(get_current_active_user),
     session: Session = Depends(get_session),
 ) -> dict:
     _get_exam_or_404(session, exam_id)
@@ -303,6 +353,7 @@ def review_diagnosis(
     exam_id: int,
     diagnosis_id: int,
     payload: DiagnosisReview,
+    current_user: User = Depends(get_current_active_user),
     session: Session = Depends(get_session),
 ) -> dict:
     exam = _get_exam_or_404(session, exam_id)
@@ -331,6 +382,7 @@ def review_diagnosis(
 def remove_diagnosis(
     exam_id: int,
     diagnosis_id: int,
+    current_user: User = Depends(get_current_active_user),
     session: Session = Depends(get_session),
 ) -> dict:
     _get_exam_or_404(session, exam_id)
@@ -361,6 +413,7 @@ def remove_diagnosis(
 def validate_exam(
     exam_id: int,
     payload: ExamValidate,
+    current_user: User = Depends(get_current_active_user),
     session: Session = Depends(get_session),
 ) -> dict:
     if payload.review_result not in VALID_REVIEW_RESULTS:
@@ -380,7 +433,7 @@ def validate_exam(
 
     review = Review(
         exam_id=exam.id,
-        doctor_name=payload.doctor_name or "Dr. João",
+        doctor_name=current_user.full_name,
         status_before=status_before,
         status_after="valido",
         review_result=payload.review_result,
@@ -394,7 +447,10 @@ def validate_exam(
 
 
 @app.get("/dashboard/stats")
-def dashboard_stats(session: Session = Depends(get_session)) -> dict:
+def dashboard_stats(
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+) -> dict:
     exams = session.exec(select(Exam)).all()
     reviews = session.exec(select(Review).where(Review.status_after == "valido")).all()
     now = datetime.utcnow()

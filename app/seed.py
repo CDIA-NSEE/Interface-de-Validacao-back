@@ -1,9 +1,11 @@
 from datetime import datetime, timedelta
+import os
 
 from sqlmodel import Session, select
 
+from app.auth import get_password_hash
 from app.metadata_source import conclusion_items, load_metadata_records
-from app.models import Diagnosis, Exam, Patient, Review
+from app.models import Diagnosis, Exam, Patient, Review, User
 
 
 SIMULATED_CATEGORIES = {"Rotina", "Ambulatorial", "Ocupacional", "Emergencia"}
@@ -22,6 +24,14 @@ SIMULATED_EXAM_CODES = {
     "C0DE15",
     "FF210A",
 }
+
+DEFAULT_DATABASE_URL = "sqlite:///./ecg_review.db"
+DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
+DEFAULT_USER_USERNAME = os.getenv("DEFAULT_USER_USERNAME", "dr.joao").strip().lower()
+DEFAULT_USER_FULL_NAME = os.getenv("DEFAULT_USER_FULL_NAME", "Dr. João").strip()
+DEFAULT_USER_PASSWORD = os.getenv("DEFAULT_USER_PASSWORD")
+if DEFAULT_USER_PASSWORD is None and DATABASE_URL == DEFAULT_DATABASE_URL:
+    DEFAULT_USER_PASSWORD = "medpage123"
 
 
 def _bmi(weight: float, height: float) -> float:
@@ -146,7 +156,31 @@ def _normalize_simulated_metadata(session: Session) -> None:
         session.commit()
 
 
+def _seed_default_user(session: Session) -> None:
+    if not DEFAULT_USER_USERNAME or not DEFAULT_USER_PASSWORD:
+        return
+
+    user = session.exec(select(User).where(User.username == DEFAULT_USER_USERNAME)).first()
+    if user:
+        if user.full_name != DEFAULT_USER_FULL_NAME:
+            user.full_name = DEFAULT_USER_FULL_NAME
+            session.add(user)
+            session.commit()
+        return
+
+    session.add(
+        User(
+            username=DEFAULT_USER_USERNAME,
+            full_name=DEFAULT_USER_FULL_NAME or DEFAULT_USER_USERNAME,
+            hashed_password=get_password_hash(DEFAULT_USER_PASSWORD),
+        )
+    )
+    session.commit()
+
+
 def seed_database(session: Session) -> None:
+    _seed_default_user(session)
+
     if _import_metadata_database(session):
         return
 

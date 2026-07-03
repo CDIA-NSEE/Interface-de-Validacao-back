@@ -3,6 +3,24 @@ from typing import Literal, Optional
 from pydantic import BaseModel
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class UserRead(BaseModel):
+    id: int
+    username: str
+    full_name: str
+    is_active: bool
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserRead
+
+
 class StatusUpdate(BaseModel):
     status_validation: Literal["nao_validado", "em_validacao", "valido"]
 
@@ -23,4 +41,4 @@ class DiagnosisReview(BaseModel):
 class ExamValidate(BaseModel):
     review_result: Literal["sem_alteracao", "alterado"]
     notes: Optional[str] = None
-    doctor_name: str = "Dr. João"
+    doctor_name: Optional[str] = None
