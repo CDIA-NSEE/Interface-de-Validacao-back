@@ -6,6 +6,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./ecg_review.db")
+RESET_DATABASE_ON_STARTUP = os.getenv("RESET_DATABASE_ON_STARTUP")
 
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(DATABASE_URL, connect_args=connect_args)
@@ -14,6 +15,19 @@ engine = create_engine(DATABASE_URL, connect_args=connect_args)
 def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
     _migrate_columns()
+
+
+def reset_db_and_tables() -> None:
+    SQLModel.metadata.drop_all(engine)
+    SQLModel.metadata.create_all(engine)
+    _migrate_columns()
+
+
+def should_reset_database_on_startup() -> bool:
+    if RESET_DATABASE_ON_STARTUP is not None:
+        return RESET_DATABASE_ON_STARTUP.lower() in {"1", "true", "yes", "sim", "on"}
+
+    return DATABASE_URL == "sqlite:///./ecg_review.db"
 
 
 def _migrate_columns() -> None:

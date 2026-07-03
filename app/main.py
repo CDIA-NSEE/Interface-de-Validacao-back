@@ -7,7 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import desc
 from sqlmodel import Session, select
 
-from app.database import create_db_and_tables, engine, get_session
+from app.database import (
+    create_db_and_tables,
+    engine,
+    get_session,
+    reset_db_and_tables,
+    should_reset_database_on_startup,
+)
 from app.metadata_source import load_diagnosis_options
 from app.models import Diagnosis, Exam, Patient, Review
 from app.schemas import DiagnosisCreate, DiagnosisReview, ExamValidate, StatusUpdate
@@ -20,7 +26,11 @@ VALID_REVIEW_RESULTS = {"sem_alteracao", "alterado"}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    create_db_and_tables()
+    if should_reset_database_on_startup():
+        reset_db_and_tables()
+    else:
+        create_db_and_tables()
+
     with Session(engine) as session:
         seed_database(session)
     yield
