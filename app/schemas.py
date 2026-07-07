@@ -4,14 +4,21 @@ from pydantic import BaseModel
 
 
 class LoginRequest(BaseModel):
-    username: str
+    username: Optional[str] = None
+    email: Optional[str] = None
     password: str
+
+    @property
+    def identifier(self) -> str:
+        return (self.email or self.username or "").strip().lower()
 
 
 class UserRead(BaseModel):
     id: int
     username: str
+    email: Optional[str] = None
     full_name: str
+    role: str
     is_active: bool
 
 
@@ -36,6 +43,7 @@ class DiagnosisCreate(BaseModel):
 
 class DiagnosisReview(BaseModel):
     review_status: Literal["confirmed", "rejected"]
+    notes: Optional[str] = None
 
 
 class ExamValidate(BaseModel):

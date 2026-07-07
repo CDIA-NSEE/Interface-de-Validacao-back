@@ -44,6 +44,7 @@ def _migrate_columns() -> None:
             "comments": "VARCHAR",
             "source_notes": "VARCHAR",
         },
+        "users": {"role": "VARCHAR NOT NULL DEFAULT 'doctor'"},
     }
 
     with engine.begin() as connection:

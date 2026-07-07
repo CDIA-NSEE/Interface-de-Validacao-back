@@ -69,6 +69,36 @@ class Review(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ValidationCycle(SQLModel, table=True):
+    __tablename__ = "validation_cycles"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    cycle_key: str = Field(index=True, unique=True)
+    label: str
+    cycle_start_date: Optional[date] = None
+    general_review_day: int = Field(default=30)
+    is_active: bool = Field(default=True, index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class DiagnosisValidation(SQLModel, table=True):
+    __tablename__ = "diagnosis_validations"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    exam_id: int = Field(foreign_key="exams.id", index=True)
+    diagnosis_id: int = Field(foreign_key="diagnoses.id", index=True)
+    standard_text: str = Field(index=True)
+    cycle_key: str = Field(default="default", index=True)
+    day_index: Optional[int] = Field(default=None, index=True)
+    review_status: str = Field(index=True)
+    reviewer_id: Optional[int] = Field(default=None, foreign_key="users.id", index=True)
+    reviewer_name: str
+    notes: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class User(SQLModel, table=True):
     __tablename__ = "users"
 
@@ -76,5 +106,6 @@ class User(SQLModel, table=True):
     username: str = Field(index=True, unique=True)
     full_name: str
     hashed_password: str
+    role: str = Field(default="doctor", index=True)
     is_active: bool = Field(default=True, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)

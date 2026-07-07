@@ -2,6 +2,11 @@ import os
 import sqlite3
 from pathlib import Path
 
+try:
+    import zstandard as zstd
+except ImportError:  # pragma: no cover - optional fallback for environments not installed yet
+    zstd = None
+
 
 DEFAULT_METADATA_PATH = Path(__file__).resolve().parents[2] / "data" / "database" / "metadata.db"
 
@@ -45,3 +50,39 @@ def load_diagnosis_options() -> list[str]:
         if record["conclusions_flag"]:
             options.extend(conclusion_items(record["conclusions"]))
     return list(dict.fromkeys(options))
+
+
+def load_metadata_image(metadata_id: int | None) -> dict | None:
+    if not metadata_id or zstd is None:
+        return None
+
+    path = metadata_database_path()
+    if not path.exists():
+        return None
+
+    with sqlite3.connect(path) as connection:
+        row = connection.execute(
+            "SELECT image_zst FROM metadata WHERE id = ?",
+            (metadata_id,),
+        ).fetchone()
+
+    if not row or not row[0]:
+        return None
+
+    try:
+        image_bytes = zstd.ZstdDecompressor().decompress(row[0])
+    except zstd.ZstdError:
+        return None
+
+    media_type = "application/octet-stream"
+    if image_bytes.startswith(b"BM"):
+        media_type = "image/bmp"
+    elif image_bytes.startswith(b"\x89PNG"):
+        media_type = "image/png"
+    elif image_bytes.startswith(b"\xff\xd8"):
+        media_type = "image/jpeg"
+
+    return {
+        "content": image_bytes,
+        "media_type": media_type,
+    }

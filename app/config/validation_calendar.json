@@ -1,0 +1,8 @@
+{
+  "cycle_key": "default",
+  "cycle_label": "Ciclo de validacao ECG",
+  "cycle_start_date": null,
+  "active_day_index": null,
+  "general_review_day": 30,
+  "days": []
+}

@@ -4,8 +4,9 @@ import os
 from sqlmodel import Session, select
 
 from app.auth import get_password_hash
+from app.config_source import load_validation_calendar
 from app.metadata_source import conclusion_items, load_metadata_records
-from app.models import Diagnosis, Exam, Patient, Review, User
+from app.models import Diagnosis, Exam, Patient, Review, User, ValidationCycle
 
 
 SIMULATED_CATEGORIES = {"Rotina", "Ambulatorial", "Ocupacional", "Emergencia"}
@@ -32,6 +33,11 @@ DEFAULT_USER_FULL_NAME = os.getenv("DEFAULT_USER_FULL_NAME", "Dr. João").strip(
 DEFAULT_USER_PASSWORD = os.getenv("DEFAULT_USER_PASSWORD")
 if DEFAULT_USER_PASSWORD is None and DATABASE_URL == DEFAULT_DATABASE_URL:
     DEFAULT_USER_PASSWORD = "medpage123"
+DEFAULT_ADMIN_USERNAME = os.getenv("DEFAULT_ADMIN_USERNAME", "admin").strip().lower()
+DEFAULT_ADMIN_FULL_NAME = os.getenv("DEFAULT_ADMIN_FULL_NAME", "Administrador Operacional").strip()
+DEFAULT_ADMIN_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD")
+if DEFAULT_ADMIN_PASSWORD is None and DATABASE_URL == DEFAULT_DATABASE_URL:
+    DEFAULT_ADMIN_PASSWORD = "admin123"
 
 
 def _bmi(weight: float, height: float) -> float:
@@ -162,8 +168,14 @@ def _seed_default_user(session: Session) -> None:
 
     user = session.exec(select(User).where(User.username == DEFAULT_USER_USERNAME)).first()
     if user:
+        changed = False
         if user.full_name != DEFAULT_USER_FULL_NAME:
             user.full_name = DEFAULT_USER_FULL_NAME
+            changed = True
+        if user.role != "doctor":
+            user.role = "doctor"
+            changed = True
+        if changed:
             session.add(user)
             session.commit()
         return
@@ -173,6 +185,58 @@ def _seed_default_user(session: Session) -> None:
             username=DEFAULT_USER_USERNAME,
             full_name=DEFAULT_USER_FULL_NAME or DEFAULT_USER_USERNAME,
             hashed_password=get_password_hash(DEFAULT_USER_PASSWORD),
+            role="doctor",
+        )
+    )
+    session.commit()
+
+
+def _seed_admin_user(session: Session) -> None:
+    if not DEFAULT_ADMIN_USERNAME or not DEFAULT_ADMIN_PASSWORD:
+        return
+
+    user = session.exec(select(User).where(User.username == DEFAULT_ADMIN_USERNAME)).first()
+    if user:
+        changed = False
+        if user.full_name != DEFAULT_ADMIN_FULL_NAME:
+            user.full_name = DEFAULT_ADMIN_FULL_NAME
+            changed = True
+        if user.role != "admin":
+            user.role = "admin"
+            changed = True
+        if changed:
+            session.add(user)
+            session.commit()
+        return
+
+    session.add(
+        User(
+            username=DEFAULT_ADMIN_USERNAME,
+            full_name=DEFAULT_ADMIN_FULL_NAME or DEFAULT_ADMIN_USERNAME,
+            hashed_password=get_password_hash(DEFAULT_ADMIN_PASSWORD),
+            role="admin",
+        )
+    )
+    session.commit()
+
+
+def _seed_validation_cycle(session: Session) -> None:
+    calendar = load_validation_calendar()
+    cycle = session.exec(
+        select(ValidationCycle).where(ValidationCycle.cycle_key == calendar["cycle_key"])
+    ).first()
+    if cycle:
+        cycle.label = calendar["cycle_label"]
+        cycle.general_review_day = calendar["general_review_day"]
+        session.add(cycle)
+        session.commit()
+        return
+
+    session.add(
+        ValidationCycle(
+            cycle_key=calendar["cycle_key"],
+            label=calendar["cycle_label"],
+            general_review_day=calendar["general_review_day"],
         )
     )
     session.commit()
@@ -180,6 +244,8 @@ def _seed_default_user(session: Session) -> None:
 
 def seed_database(session: Session) -> None:
     _seed_default_user(session)
+    _seed_admin_user(session)
+    _seed_validation_cycle(session)
 
     if _import_metadata_database(session):
         return

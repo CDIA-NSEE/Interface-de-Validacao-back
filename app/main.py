@@ -2,12 +2,20 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from sqlalchemy import desc
 from sqlmodel import Session, select
 
 from app.auth import authenticate_user, create_access_token, get_current_active_user
+from app.config_source import (
+    active_validation_context,
+    email_domain_allowed,
+    load_support_contact,
+    normalize_text,
+    standardize_diagnosis,
+)
 from app.database import (
     create_db_and_tables,
     engine,
@@ -15,8 +23,8 @@ from app.database import (
     reset_db_and_tables,
     should_reset_database_on_startup,
 )
-from app.metadata_source import load_diagnosis_options
-from app.models import Diagnosis, Exam, Patient, Review, User
+from app.metadata_source import load_diagnosis_options, load_metadata_image
+from app.models import Diagnosis, DiagnosisValidation, Exam, Patient, Review, User
 from app.schemas import (
     DiagnosisCreate,
     DiagnosisReview,
@@ -80,13 +88,57 @@ def _patient_payload(patient: Patient) -> dict:
     }
 
 
-def _diagnosis_payload(diagnosis: Diagnosis) -> dict:
+def _same_standard_text(left: str | None, right: str | None) -> bool:
+    return normalize_text(left) == normalize_text(right)
+
+
+def _latest_standard_validation(
+    session: Session,
+    exam_id: int,
+    standard_text: str,
+    cycle_key: str,
+) -> DiagnosisValidation | None:
+    return session.exec(
+        select(DiagnosisValidation)
+        .where(DiagnosisValidation.exam_id == exam_id)
+        .where(DiagnosisValidation.standard_text == standard_text)
+        .where(DiagnosisValidation.cycle_key == cycle_key)
+        .order_by(desc(DiagnosisValidation.updated_at))
+    ).first()
+
+
+def _diagnosis_payload(
+    diagnosis: Diagnosis,
+    session: Session | None = None,
+    context: dict | None = None,
+) -> dict:
+    context = context or active_validation_context()
+    standard_text = standardize_diagnosis(diagnosis.name)
+    validation = (
+        _latest_standard_validation(session, diagnosis.exam_id, standard_text, context["cycle_key"])
+        if session
+        else None
+    )
+    active_standard_diagnosis = context.get("active_standard_diagnosis")
+    validation_status = validation.review_status if validation else diagnosis.review_status
+
     return {
         "id": diagnosis.id,
         "exam_id": diagnosis.exam_id,
         "name": diagnosis.name,
+        "standard_text": standard_text,
+        "original_text": diagnosis.name,
         "source": diagnosis.source,
-        "review_status": diagnosis.review_status,
+        "review_status": validation_status,
+        "legacy_review_status": diagnosis.review_status,
+        "validation_status": validation_status,
+        "validation_id": validation.id if validation else None,
+        "validated_at": validation.updated_at if validation else None,
+        "daily_required": bool(
+            diagnosis.source == "original"
+            and active_standard_diagnosis
+            and _same_standard_text(standard_text, active_standard_diagnosis)
+        ),
         "is_abnormal": diagnosis.is_abnormal,
         "region_x": diagnosis.region_x,
         "region_y": diagnosis.region_y,
@@ -118,7 +170,13 @@ def _review_timestamps(session: Session, exam: Exam) -> tuple[Optional[datetime]
     return None, completed_at
 
 
-def _exam_payload(session: Session, exam: Exam, include_details: bool = False) -> dict:
+def _exam_payload(
+    session: Session,
+    exam: Exam,
+    include_details: bool = False,
+    context: dict | None = None,
+) -> dict:
+    context = context or active_validation_context()
     patient = session.get(Patient, exam.patient_id)
     started_at, completed_at = _review_timestamps(session, exam)
     payload = {
@@ -131,6 +189,7 @@ def _exam_payload(session: Session, exam: Exam, include_details: bool = False) -
         "status_validation": exam.status_validation,
         "review_result": exam.review_result if exam.status_validation == "valido" else None,
         "image_url": exam.image_url,
+        "image_endpoint": f"/exams/{exam.id}/image",
         "comments": exam.comments,
         "source_notes": exam.source_notes,
         "created_at": exam.created_at,
@@ -138,6 +197,7 @@ def _exam_payload(session: Session, exam: Exam, include_details: bool = False) -
         "started_at": started_at,
         "completed_at": completed_at,
         "patient": _patient_payload(patient),
+        "validation_context": context,
     }
 
     if include_details:
@@ -146,7 +206,10 @@ def _exam_payload(session: Session, exam: Exam, include_details: bool = False) -
             .where(Diagnosis.exam_id == exam.id)
             .order_by(Diagnosis.created_at)
         ).all()
-        payload["diagnoses"] = [_diagnosis_payload(diagnosis) for diagnosis in diagnoses]
+        payload["diagnoses"] = [
+            _diagnosis_payload(diagnosis, session=session, context=context)
+            for diagnosis in diagnoses
+        ]
 
     return payload
 
@@ -166,6 +229,75 @@ def _validate_status(status_validation: str) -> None:
         )
 
 
+def _context_payload() -> dict:
+    context = active_validation_context()
+    return {
+        **context,
+        "support_contact": load_support_contact(),
+    }
+
+
+def _original_diagnoses(session: Session, exam_id: int) -> list[Diagnosis]:
+    return session.exec(
+        select(Diagnosis)
+        .where(Diagnosis.exam_id == exam_id)
+        .where(Diagnosis.source == "original")
+        .order_by(Diagnosis.created_at)
+    ).all()
+
+
+def _required_diagnoses_for_context(
+    session: Session,
+    exam: Exam,
+    context: dict,
+) -> list[Diagnosis]:
+    active_standard_diagnosis = context.get("active_standard_diagnosis")
+    if not active_standard_diagnosis:
+        return []
+
+    return [
+        diagnosis
+        for diagnosis in _original_diagnoses(session, exam.id)
+        if _same_standard_text(standardize_diagnosis(diagnosis.name), active_standard_diagnosis)
+    ]
+
+
+def _exam_pending_for_context(session: Session, exam: Exam, context: dict) -> bool:
+    if not context.get("is_configured"):
+        return False
+
+    if context.get("is_general_review_day"):
+        return exam.status_validation != "valido"
+
+    required_diagnoses = _required_diagnoses_for_context(session, exam, context)
+    if not required_diagnoses:
+        return False
+
+    active_standard_diagnosis = standardize_diagnosis(required_diagnoses[0].name)
+    validation = _latest_standard_validation(
+        session,
+        exam.id,
+        active_standard_diagnosis,
+        context["cycle_key"],
+    )
+    return validation is None
+
+
+def _validation_queue(session: Session, context: dict) -> list[Exam]:
+    if not context.get("is_configured"):
+        return []
+
+    exams = session.exec(select(Exam).order_by(desc(Exam.exam_date), desc(Exam.created_at))).all()
+    pending_exams = [exam for exam in exams if _exam_pending_for_context(session, exam, context)]
+    return sorted(
+        pending_exams,
+        key=lambda exam: (
+            {"em_validacao": 0, "nao_validado": 1}.get(exam.status_validation, 2),
+            exam.created_at,
+        ),
+    )
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
@@ -175,19 +307,34 @@ def _user_read(user: User) -> UserRead:
     return UserRead(
         id=user.id,
         username=user.username,
+        email=user.username if "@" in user.username else None,
         full_name=user.full_name,
+        role=user.role,
         is_active=user.is_active,
     )
 
 
 @app.post("/auth/login", response_model=TokenResponse)
 def login(payload: LoginRequest, session: Session = Depends(get_session)) -> TokenResponse:
-    user = authenticate_user(session, payload.username, payload.password)
+    identifier = payload.identifier
+    if not identifier or not payload.password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Informe e-mail/usuario e senha.",
+        )
+
+    user = authenticate_user(session, identifier, payload.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Usuário ou senha inválidos.",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if user.role != "admin" and not email_domain_allowed(user.username):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="E-mail fora do dominio institucional BP configurado.",
         )
 
     return TokenResponse(
@@ -199,6 +346,121 @@ def login(payload: LoginRequest, session: Session = Depends(get_session)) -> Tok
 @app.get("/auth/me", response_model=UserRead)
 def read_current_user(current_user: User = Depends(get_current_active_user)) -> UserRead:
     return _user_read(current_user)
+
+
+@app.get("/validation/context")
+def validation_context(
+    current_user: User = Depends(get_current_active_user),
+) -> dict:
+    return _context_payload()
+
+
+@app.get("/validation/queue")
+def validation_queue(
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    context = active_validation_context()
+    queue = _validation_queue(session, context)
+    return {
+        "context": context,
+        "items": [_exam_payload(session, exam, include_details=False, context=context) for exam in queue],
+        "total": len(queue),
+    }
+
+
+@app.get("/validation/next")
+def validation_next(
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    context = active_validation_context()
+    queue = _validation_queue(session, context)
+    next_exam = queue[0] if queue else None
+    return {
+        "context": context,
+        "exam": _exam_payload(session, next_exam, include_details=True, context=context)
+        if next_exam
+        else None,
+    }
+
+
+@app.post("/validation/diagnoses/{diagnosis_id}/review")
+def review_validation_diagnosis(
+    diagnosis_id: int,
+    payload: DiagnosisReview,
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    diagnosis = session.get(Diagnosis, diagnosis_id)
+    if not diagnosis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Diagnostico nao encontrado.",
+        )
+
+    exam = _get_exam_or_404(session, diagnosis.exam_id)
+    context = active_validation_context()
+    standard_text = standardize_diagnosis(diagnosis.name)
+    now = datetime.utcnow()
+    validation = _latest_standard_validation(
+        session,
+        exam.id,
+        standard_text,
+        context["cycle_key"],
+    )
+
+    if validation:
+        validation.diagnosis_id = diagnosis.id
+        validation.review_status = payload.review_status
+        validation.reviewer_id = current_user.id
+        validation.reviewer_name = current_user.full_name
+        validation.notes = payload.notes
+        validation.day_index = context.get("day_index")
+        validation.updated_at = now
+    else:
+        validation = DiagnosisValidation(
+            exam_id=exam.id,
+            diagnosis_id=diagnosis.id,
+            standard_text=standard_text,
+            cycle_key=context["cycle_key"],
+            day_index=context.get("day_index"),
+            review_status=payload.review_status,
+            reviewer_id=current_user.id,
+            reviewer_name=current_user.full_name,
+            notes=payload.notes,
+            created_at=now,
+            updated_at=now,
+        )
+
+    diagnosis.review_status = payload.review_status
+    status_before = exam.status_validation
+    if exam.status_validation == "nao_validado":
+        exam.status_validation = "em_validacao"
+        session.add(
+            Review(
+                exam_id=exam.id,
+                doctor_name=current_user.full_name,
+                status_before=status_before,
+                status_after="em_validacao",
+                created_at=now,
+            )
+        )
+
+    exam.updated_at = now
+    session.add(validation)
+    session.add(diagnosis)
+    session.add(exam)
+    session.commit()
+    session.refresh(exam)
+    return _exam_payload(session, exam, include_details=True, context=context)
+
+
+@app.get("/support/contact")
+def support_contact(
+    current_user: User = Depends(get_current_active_user),
+) -> dict:
+    return load_support_contact()
 
 
 @app.get("/exams")
@@ -262,6 +524,23 @@ def get_exam(
 ) -> dict:
     exam = _get_exam_or_404(session, exam_id)
     return _exam_payload(session, exam, include_details=True)
+
+
+@app.get("/exams/{exam_id}/image", response_model=None)
+def get_exam_image(
+    exam_id: int,
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+):
+    exam = _get_exam_or_404(session, exam_id)
+    image = load_metadata_image(exam.metadata_id)
+    if image:
+        return Response(
+            content=image["content"],
+            media_type=image["media_type"],
+            headers={"Cache-Control": "private, max-age=3600"},
+        )
+    return RedirectResponse(url=exam.image_url or "/sample-ecg.svg")
 
 
 @app.get("/diagnosis-options")
@@ -345,7 +624,7 @@ def add_diagnosis(
 
     session.commit()
     session.refresh(diagnosis)
-    return _diagnosis_payload(diagnosis)
+    return _diagnosis_payload(diagnosis, session=session)
 
 
 @app.patch("/exams/{exam_id}/diagnoses/{diagnosis_id}/review")
@@ -375,7 +654,7 @@ def review_diagnosis(
     session.add(exam)
     session.commit()
     session.refresh(diagnosis)
-    return _diagnosis_payload(diagnosis)
+    return _diagnosis_payload(diagnosis, session=session)
 
 
 @app.delete("/exams/{exam_id}/diagnoses/{diagnosis_id}")

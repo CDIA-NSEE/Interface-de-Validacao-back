@@ -1,0 +1,11 @@
+{
+  "title": "Contato BP/NSEE",
+  "description": "Canais oficiais de suporte ainda pendentes de configuracao.",
+  "channels": [
+    {
+      "label": "Suporte operacional",
+      "type": "text",
+      "value": "Definir canal oficial BP/NSEE"
+    }
+  ]
+}
