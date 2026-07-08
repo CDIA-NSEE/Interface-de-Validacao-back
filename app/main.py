@@ -98,13 +98,21 @@ def _latest_standard_validation(
     standard_text: str,
     cycle_key: str,
 ) -> DiagnosisValidation | None:
-    return session.exec(
+    validations = session.exec(
         select(DiagnosisValidation)
         .where(DiagnosisValidation.exam_id == exam_id)
-        .where(DiagnosisValidation.standard_text == standard_text)
         .where(DiagnosisValidation.cycle_key == cycle_key)
         .order_by(desc(DiagnosisValidation.updated_at))
-    ).first()
+    ).all()
+    normalized_standard_text = normalize_text(standard_text)
+    return next(
+        (
+            validation
+            for validation in validations
+            if normalize_text(validation.standard_text) == normalized_standard_text
+        ),
+        None,
+    )
 
 
 def _diagnosis_payload(
@@ -114,6 +122,7 @@ def _diagnosis_payload(
 ) -> dict:
     context = context or active_validation_context()
     standard_text = standardize_diagnosis(diagnosis.name)
+    is_grouped = not _same_standard_text(standard_text, diagnosis.name)
     validation = (
         _latest_standard_validation(session, diagnosis.exam_id, standard_text, context["cycle_key"])
         if session
@@ -128,6 +137,7 @@ def _diagnosis_payload(
         "name": diagnosis.name,
         "standard_text": standard_text,
         "original_text": diagnosis.name,
+        "is_grouped": is_grouped,
         "source": diagnosis.source,
         "review_status": validation_status,
         "legacy_review_status": diagnosis.review_status,
@@ -591,14 +601,15 @@ def add_diagnosis(
     session: Session = Depends(get_session),
 ) -> dict:
     _get_exam_or_404(session, exam_id)
-    diagnosis_name = payload.name.strip()
-    if not diagnosis_name:
+    requested_diagnosis_name = payload.name.strip()
+    if not requested_diagnosis_name:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="O nome do diagnóstico é obrigatório.",
         )
 
     allowed_names = set(load_diagnosis_options())
+    diagnosis_name = standardize_diagnosis(requested_diagnosis_name)
     if diagnosis_name not in allowed_names:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

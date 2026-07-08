@@ -2,6 +2,8 @@ import os
 import sqlite3
 from pathlib import Path
 
+from app.config_source import load_diagnosis_groupings, normalize_text, standardize_diagnosis
+
 try:
     import zstandard as zstd
 except ImportError:  # pragma: no cover - optional fallback for environments not installed yet
@@ -46,10 +48,25 @@ def conclusion_items(conclusions: str | None) -> list[str]:
 
 def load_diagnosis_options() -> list[str]:
     options = []
+    seen = set()
+
+    for group in load_diagnosis_groupings():
+        standard_text = group["standard_text"]
+        normalized_text = normalize_text(standard_text)
+        if normalized_text and normalized_text not in seen:
+            options.append(standard_text)
+            seen.add(normalized_text)
+
     for record in load_metadata_records():
         if record["conclusions_flag"]:
-            options.extend(conclusion_items(record["conclusions"]))
-    return list(dict.fromkeys(options))
+            for diagnosis in conclusion_items(record["conclusions"]):
+                standard_text = standardize_diagnosis(diagnosis)
+                normalized_text = normalize_text(standard_text)
+                if normalized_text and normalized_text not in seen:
+                    options.append(standard_text)
+                    seen.add(normalized_text)
+
+    return options
 
 
 def load_metadata_image(metadata_id: int | None) -> dict | None:
