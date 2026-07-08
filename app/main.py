@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+import re
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
@@ -24,9 +25,10 @@ from app.database import (
     should_reset_database_on_startup,
 )
 from app.metadata_source import load_diagnosis_options, load_metadata_image
-from app.models import Diagnosis, DiagnosisValidation, Exam, Patient, Review, User
+from app.models import Diagnosis, DiagnosisRegion, DiagnosisValidation, Exam, Patient, Review, User
 from app.schemas import (
     DiagnosisCreate,
+    DiagnosisRegionPayload,
     DiagnosisReview,
     ExamValidate,
     LoginRequest,
@@ -115,6 +117,143 @@ def _latest_standard_validation(
     )
 
 
+def _diagnosis_regions(session: Session, diagnosis: Diagnosis) -> list[DiagnosisRegion]:
+    return session.exec(
+        select(DiagnosisRegion)
+        .where(DiagnosisRegion.diagnosis_id == diagnosis.id)
+        .order_by(DiagnosisRegion.created_at, DiagnosisRegion.id)
+    ).all()
+
+
+def _legacy_region_payload(diagnosis: Diagnosis) -> dict | None:
+    if diagnosis.region_width and diagnosis.region_height:
+        return {
+            "id": None,
+            "x": diagnosis.region_x,
+            "y": diagnosis.region_y,
+            "width": diagnosis.region_width,
+            "height": diagnosis.region_height,
+            "created_at": diagnosis.created_at,
+            "legacy": True,
+        }
+    return None
+
+
+def _region_payload(region: DiagnosisRegion) -> dict:
+    return {
+        "id": region.id,
+        "x": region.x,
+        "y": region.y,
+        "width": region.width,
+        "height": region.height,
+        "created_at": region.created_at,
+        "legacy": False,
+    }
+
+
+def _diagnosis_region_payloads(session: Session | None, diagnosis: Diagnosis) -> list[dict]:
+    if not session:
+        legacy_region = _legacy_region_payload(diagnosis)
+        return [legacy_region] if legacy_region else []
+
+    regions = [_region_payload(region) for region in _diagnosis_regions(session, diagnosis)]
+    if regions:
+        return regions
+
+    legacy_region = _legacy_region_payload(diagnosis)
+    return [legacy_region] if legacy_region else []
+
+
+def _diagnosis_requires_region(standard_text: str | None, original_text: str | None) -> bool:
+    normalized_values = [normalize_text(standard_text), normalize_text(original_text)]
+    for normalized_text in normalized_values:
+        if "INFARTO" in normalized_text:
+            return True
+
+        tokens = re.findall(r"[A-Z0-9]+", normalized_text)
+        if any(token == "IAM" or token.startswith("IAM") for token in tokens):
+            return True
+
+    return False
+
+
+def _validate_region_payload(payload: DiagnosisRegionPayload) -> None:
+    values = {
+        "x": payload.x,
+        "y": payload.y,
+        "width": payload.width,
+        "height": payload.height,
+    }
+    if any(value < 0 or value > 100 for value in values.values()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="As coordenadas da area devem estar entre 0 e 100.",
+        )
+    if payload.width <= 0 or payload.height <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A area selecionada deve ter largura e altura validas.",
+        )
+    if payload.x + payload.width > 100 or payload.y + payload.height > 100:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A area selecionada deve ficar dentro da imagem do ECG.",
+        )
+
+
+def _sync_legacy_region_fields(session: Session, diagnosis: Diagnosis) -> None:
+    first_region = session.exec(
+        select(DiagnosisRegion)
+        .where(DiagnosisRegion.diagnosis_id == diagnosis.id)
+        .order_by(DiagnosisRegion.created_at, DiagnosisRegion.id)
+    ).first()
+
+    if first_region:
+        diagnosis.region_x = first_region.x
+        diagnosis.region_y = first_region.y
+        diagnosis.region_width = first_region.width
+        diagnosis.region_height = first_region.height
+    else:
+        diagnosis.region_x = None
+        diagnosis.region_y = None
+        diagnosis.region_width = None
+        diagnosis.region_height = None
+
+
+def _region_input_from_diagnosis_payload(payload: DiagnosisCreate) -> DiagnosisRegionPayload | None:
+    if (
+        payload.region_x is None
+        or payload.region_y is None
+        or payload.region_width is None
+        or payload.region_height is None
+    ):
+        return None
+
+    return DiagnosisRegionPayload(
+        x=payload.region_x,
+        y=payload.region_y,
+        width=payload.region_width,
+        height=payload.region_height,
+    )
+
+
+def _effective_review_status(session: Session, diagnosis: Diagnosis, context: dict | None = None) -> str:
+    context = context or active_validation_context()
+    standard_text = standardize_diagnosis(diagnosis.name)
+    validation = _latest_standard_validation(session, diagnosis.exam_id, standard_text, context["cycle_key"])
+    return validation.review_status if validation else diagnosis.review_status
+
+
+def _ensure_region_before_confirm(session: Session, diagnosis: Diagnosis) -> None:
+    standard_text = standardize_diagnosis(diagnosis.name)
+    regions = _diagnosis_region_payloads(session, diagnosis)
+    if _diagnosis_requires_region(standard_text, diagnosis.name) and not regions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Marque ao menos uma area do ECG antes de confirmar um diagnostico de infarto.",
+        )
+
+
 def _diagnosis_payload(
     diagnosis: Diagnosis,
     session: Session | None = None,
@@ -123,6 +262,8 @@ def _diagnosis_payload(
     context = context or active_validation_context()
     standard_text = standardize_diagnosis(diagnosis.name)
     is_grouped = not _same_standard_text(standard_text, diagnosis.name)
+    regions = _diagnosis_region_payloads(session, diagnosis)
+    requires_region = _diagnosis_requires_region(standard_text, diagnosis.name)
     validation = (
         _latest_standard_validation(session, diagnosis.exam_id, standard_text, context["cycle_key"])
         if session
@@ -138,12 +279,17 @@ def _diagnosis_payload(
         "standard_text": standard_text,
         "original_text": diagnosis.name,
         "is_grouped": is_grouped,
+        "regions": regions,
+        "regions_count": len(regions),
+        "requires_region": requires_region,
+        "region_required_missing": bool(requires_region and not regions),
         "source": diagnosis.source,
         "review_status": validation_status,
         "legacy_review_status": diagnosis.review_status,
         "validation_status": validation_status,
         "validation_id": validation.id if validation else None,
         "validated_at": validation.updated_at if validation else None,
+        "review_notes": validation.notes if validation and validation.notes else None,
         "daily_required": bool(
             diagnosis.source == "original"
             and active_standard_diagnosis
@@ -229,6 +375,26 @@ def _get_exam_or_404(session: Session, exam_id: int) -> Exam:
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exame não encontrado.")
     return exam
+
+
+def _get_diagnosis_or_404(session: Session, diagnosis_id: int) -> Diagnosis:
+    diagnosis = session.get(Diagnosis, diagnosis_id)
+    if not diagnosis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Diagnostico nao encontrado.",
+        )
+    return diagnosis
+
+
+def _get_region_or_404(session: Session, diagnosis_id: int, region_id: int) -> DiagnosisRegion:
+    region = session.get(DiagnosisRegion, region_id)
+    if not region or region.diagnosis_id != diagnosis_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Area do diagnostico nao encontrada.",
+        )
+    return region
 
 
 def _validate_status(status_validation: str) -> None:
@@ -402,16 +568,14 @@ def review_validation_diagnosis(
     current_user: User = Depends(get_current_active_user),
     session: Session = Depends(get_session),
 ) -> dict:
-    diagnosis = session.get(Diagnosis, diagnosis_id)
-    if not diagnosis:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Diagnostico nao encontrado.",
-        )
+    diagnosis = _get_diagnosis_or_404(session, diagnosis_id)
 
     exam = _get_exam_or_404(session, diagnosis.exam_id)
     context = active_validation_context()
     standard_text = standardize_diagnosis(diagnosis.name)
+    if payload.review_status == "confirmed":
+        _ensure_region_before_confirm(session, diagnosis)
+
     now = datetime.utcnow()
     validation = _latest_standard_validation(
         session,
@@ -616,23 +780,136 @@ def add_diagnosis(
             detail="Selecione um diagnóstico padronizado.",
         )
 
+    region_payload = _region_input_from_diagnosis_payload(payload)
+    if region_payload:
+        _validate_region_payload(region_payload)
+
+    requires_region = _diagnosis_requires_region(diagnosis_name, requested_diagnosis_name)
+    initial_review_status = "confirmed" if region_payload or not requires_region else "pending"
     diagnosis = Diagnosis(
         exam_id=exam_id,
         name=diagnosis_name,
         source="doctor_added",
-        review_status="confirmed",
+        review_status=initial_review_status,
         is_abnormal=payload.is_abnormal,
-        region_x=payload.region_x,
-        region_y=payload.region_y,
-        region_width=payload.region_width,
-        region_height=payload.region_height,
     )
     session.add(diagnosis)
+    session.flush()
+
+    if region_payload:
+        session.add(
+            DiagnosisRegion(
+                exam_id=exam_id,
+                diagnosis_id=diagnosis.id,
+                x=region_payload.x,
+                y=region_payload.y,
+                width=region_payload.width,
+                height=region_payload.height,
+                created_by_id=current_user.id,
+                created_by_name=current_user.full_name,
+            )
+        )
+        _sync_legacy_region_fields(session, diagnosis)
 
     exam = _get_exam_or_404(session, exam_id)
     exam.updated_at = datetime.utcnow()
     session.add(exam)
 
+    session.commit()
+    session.refresh(diagnosis)
+    return _diagnosis_payload(diagnosis, session=session)
+
+
+@app.post("/diagnoses/{diagnosis_id}/regions", status_code=status.HTTP_201_CREATED)
+def create_diagnosis_region(
+    diagnosis_id: int,
+    payload: DiagnosisRegionPayload,
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    _validate_region_payload(payload)
+    diagnosis = _get_diagnosis_or_404(session, diagnosis_id)
+    region = DiagnosisRegion(
+        exam_id=diagnosis.exam_id,
+        diagnosis_id=diagnosis.id,
+        x=payload.x,
+        y=payload.y,
+        width=payload.width,
+        height=payload.height,
+        created_by_id=current_user.id,
+        created_by_name=current_user.full_name,
+    )
+    session.add(region)
+
+    if diagnosis.source == "doctor_added" and diagnosis.review_status == "pending":
+        diagnosis.review_status = "confirmed"
+
+    _sync_legacy_region_fields(session, diagnosis)
+    exam = _get_exam_or_404(session, diagnosis.exam_id)
+    exam.updated_at = datetime.utcnow()
+    session.add(diagnosis)
+    session.add(exam)
+    session.commit()
+    session.refresh(diagnosis)
+    return _diagnosis_payload(diagnosis, session=session)
+
+
+@app.patch("/diagnoses/{diagnosis_id}/regions/{region_id}")
+def update_diagnosis_region(
+    diagnosis_id: int,
+    region_id: int,
+    payload: DiagnosisRegionPayload,
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    _validate_region_payload(payload)
+    diagnosis = _get_diagnosis_or_404(session, diagnosis_id)
+    region = _get_region_or_404(session, diagnosis_id, region_id)
+    region.x = payload.x
+    region.y = payload.y
+    region.width = payload.width
+    region.height = payload.height
+    region.updated_at = datetime.utcnow()
+    session.add(region)
+    _sync_legacy_region_fields(session, diagnosis)
+
+    exam = _get_exam_or_404(session, diagnosis.exam_id)
+    exam.updated_at = datetime.utcnow()
+    session.add(diagnosis)
+    session.add(exam)
+    session.commit()
+    session.refresh(diagnosis)
+    return _diagnosis_payload(diagnosis, session=session)
+
+
+@app.delete("/diagnoses/{diagnosis_id}/regions/{region_id}")
+def delete_diagnosis_region(
+    diagnosis_id: int,
+    region_id: int,
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    diagnosis = _get_diagnosis_or_404(session, diagnosis_id)
+    region = _get_region_or_404(session, diagnosis_id, region_id)
+    regions = _diagnosis_region_payloads(session, diagnosis)
+    standard_text = standardize_diagnosis(diagnosis.name)
+    if (
+        len(regions) <= 1
+        and _diagnosis_requires_region(standard_text, diagnosis.name)
+        and _effective_review_status(session, diagnosis) == "confirmed"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Nao e possivel remover a ultima area de um infarto confirmado.",
+        )
+
+    session.delete(region)
+    session.flush()
+    _sync_legacy_region_fields(session, diagnosis)
+    exam = _get_exam_or_404(session, diagnosis.exam_id)
+    exam.updated_at = datetime.utcnow()
+    session.add(diagnosis)
+    session.add(exam)
     session.commit()
     session.refresh(diagnosis)
     return _diagnosis_payload(diagnosis, session=session)
@@ -658,6 +935,9 @@ def review_diagnosis(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Somente diagnósticos originais podem ser confirmados ou rejeitados.",
         )
+
+    if payload.review_status == "confirmed":
+        _ensure_region_before_confirm(session, diagnosis)
 
     diagnosis.review_status = payload.review_status
     exam.updated_at = datetime.utcnow()

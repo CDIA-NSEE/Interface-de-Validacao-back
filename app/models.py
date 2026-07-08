@@ -56,6 +56,22 @@ class Diagnosis(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class DiagnosisRegion(SQLModel, table=True):
+    __tablename__ = "diagnosis_regions"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    exam_id: int = Field(foreign_key="exams.id", index=True)
+    diagnosis_id: int = Field(foreign_key="diagnoses.id", index=True)
+    x: float
+    y: float
+    width: float
+    height: float
+    created_by_id: Optional[int] = Field(default=None, foreign_key="users.id", index=True)
+    created_by_name: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Review(SQLModel, table=True):
     __tablename__ = "reviews"
 

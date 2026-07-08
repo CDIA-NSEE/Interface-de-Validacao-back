@@ -46,6 +46,13 @@ class DiagnosisReview(BaseModel):
     notes: Optional[str] = None
 
 
+class DiagnosisRegionPayload(BaseModel):
+    x: float
+    y: float
+    width: float
+    height: float
+
+
 class ExamValidate(BaseModel):
     review_result: Literal["sem_alteracao", "alterado"]
     notes: Optional[str] = None
