@@ -41,6 +41,9 @@ from app.seed import seed_database
 
 VALID_STATUSES = {"nao_validado", "em_validacao", "valido"}
 VALID_REVIEW_RESULTS = {"sem_alteracao", "alterado"}
+VALID_QUEUE_STATES = {"all", "start", "validated", "completed"}
+VALID_DECISION_FILTERS = {"confirmed", "rejected"}
+VALID_REGION_FILTERS = {"with_region", "without_region"}
 
 
 @asynccontextmanager
@@ -343,6 +346,7 @@ def _exam_payload(
         "category": exam.category,
         "exam_type": exam.exam_type,
         "status_validation": exam.status_validation,
+        "queue_state": _exam_queue_state(session, exam, context),
         "review_result": exam.review_result if exam.status_validation == "valido" else None,
         "image_url": exam.image_url,
         "image_endpoint": f"/exams/{exam.id}/image",
@@ -474,6 +478,169 @@ def _validation_queue(session: Session, context: dict) -> list[Exam]:
     )
 
 
+def _validation_progress(session: Session, context: dict, queue: list[Exam]) -> dict:
+    if not context.get("is_configured"):
+        return {
+            "total": 0,
+            "remaining": 0,
+            "completed": 0,
+            "percent": 0,
+        }
+
+    if context.get("is_general_review_day"):
+        exams = session.exec(select(Exam)).all()
+        total = len(exams)
+        remaining = len(queue)
+    else:
+        active_standard_diagnosis = context.get("active_standard_diagnosis")
+        if not active_standard_diagnosis:
+            total = 0
+            remaining = 0
+        else:
+            exams = session.exec(select(Exam)).all()
+            total = 0
+            remaining = 0
+            for exam in exams:
+                required_diagnoses = _required_diagnoses_for_context(session, exam, context)
+                if not required_diagnoses:
+                    continue
+
+                total += 1
+                standard_text = standardize_diagnosis(required_diagnoses[0].name)
+                validation = _latest_standard_validation(
+                    session,
+                    exam.id,
+                    standard_text,
+                    context["cycle_key"],
+                )
+                if validation is None:
+                    remaining += 1
+
+    completed = max(total - remaining, 0)
+    percent = round((completed / total) * 100) if total else 0
+    return {
+        "total": total,
+        "remaining": remaining,
+        "completed": completed,
+        "percent": percent,
+    }
+
+
+def _diagnoses_for_queue_filters(session: Session, exam: Exam, context: dict) -> list[Diagnosis]:
+    if context.get("is_configured") and context.get("active_standard_diagnosis"):
+        return _required_diagnoses_for_context(session, exam, context)
+    return _original_diagnoses(session, exam.id)
+
+
+def _exam_has_context_validation(session: Session, exam: Exam, context: dict) -> bool:
+    required_diagnoses = _required_diagnoses_for_context(session, exam, context)
+    if not required_diagnoses:
+        return False
+
+    standard_text = standardize_diagnosis(required_diagnoses[0].name)
+    validation = _latest_standard_validation(
+        session,
+        exam.id,
+        standard_text,
+        context["cycle_key"],
+    )
+    return validation is not None
+
+
+def _exam_matches_queue_state(session: Session, exam: Exam, context: dict, queue_state: str | None) -> bool:
+    if not queue_state or queue_state == "all":
+        return True
+
+    if queue_state == "completed":
+        return exam.status_validation == "valido"
+
+    if queue_state == "start":
+        return _exam_pending_for_context(session, exam, context)
+
+    if queue_state == "validated":
+        return exam.status_validation != "valido" and _exam_has_context_validation(session, exam, context)
+
+    return True
+
+
+def _exam_queue_state(session: Session, exam: Exam, context: dict) -> str:
+    if exam.status_validation == "valido":
+        return "completed"
+
+    if _exam_has_context_validation(session, exam, context):
+        return "validated"
+
+    if _exam_pending_for_context(session, exam, context):
+        return "start"
+
+    return "start"
+
+
+def _exam_matches_decision_region(
+    session: Session,
+    exam: Exam,
+    context: dict,
+    decision: str | None,
+    region: str | None,
+) -> bool:
+    if not decision and not region:
+        return True
+
+    diagnoses = _diagnoses_for_queue_filters(session, exam, context)
+    for diagnosis in diagnoses:
+        diagnosis_status = _effective_review_status(session, diagnosis, context)
+        regions_count = len(_diagnosis_region_payloads(session, diagnosis))
+
+        if decision and diagnosis_status != decision:
+            continue
+        if region == "with_region" and regions_count == 0:
+            continue
+        if region == "without_region" and regions_count > 0:
+            continue
+
+        return True
+
+    return False
+
+
+def _queue_state_counts(session: Session, exams: list[Exam], context: dict) -> dict:
+    return {
+        "all": len(exams),
+        "start": sum(1 for exam in exams if _exam_matches_queue_state(session, exam, context, "start")),
+        "validated": sum(1 for exam in exams if _exam_matches_queue_state(session, exam, context, "validated")),
+        "completed": sum(1 for exam in exams if _exam_matches_queue_state(session, exam, context, "completed")),
+    }
+
+
+def _cross_filter_counts(session: Session, exams: list[Exam], context: dict) -> dict:
+    return {
+        "decision": {
+            "confirmed": sum(
+                1
+                for exam in exams
+                if _exam_matches_decision_region(session, exam, context, "confirmed", None)
+            ),
+            "rejected": sum(
+                1
+                for exam in exams
+                if _exam_matches_decision_region(session, exam, context, "rejected", None)
+            ),
+        },
+        "region": {
+            "with_region": sum(
+                1
+                for exam in exams
+                if _exam_matches_decision_region(session, exam, context, None, "with_region")
+            ),
+            "without_region": sum(
+                1
+                for exam in exams
+                if _exam_matches_decision_region(session, exam, context, None, "without_region")
+            ),
+        },
+    }
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
@@ -538,10 +705,12 @@ def validation_queue(
 ) -> dict:
     context = active_validation_context()
     queue = _validation_queue(session, context)
+    progress = _validation_progress(session, context, queue)
     return {
         "context": context,
         "items": [_exam_payload(session, exam, include_details=False, context=context) for exam in queue],
         "total": len(queue),
+        "progress": progress,
     }
 
 
@@ -644,6 +813,9 @@ def list_exams(
     exam_type: Optional[str] = None,
     source: Optional[str] = None,
     review_result: Optional[str] = None,
+    queue_state: Optional[str] = None,
+    decision: Optional[str] = None,
+    region: Optional[str] = None,
     search: Optional[str] = None,
     current_user: User = Depends(get_current_active_user),
     session: Session = Depends(get_session),
@@ -663,6 +835,25 @@ def list_exams(
             detail="source deve ser pending, reviewed ou all.",
         )
 
+    if queue_state and queue_state not in VALID_QUEUE_STATES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="queue_state invalido.",
+        )
+
+    if decision and decision not in VALID_DECISION_FILTERS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="decision deve ser confirmed ou rejected.",
+        )
+
+    if region and region not in VALID_REGION_FILTERS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="region deve ser with_region ou without_region.",
+        )
+
+    context = active_validation_context()
     exams = session.exec(select(Exam).order_by(desc(Exam.exam_date), desc(Exam.created_at))).all()
     normalized_search = search.strip().lower() if search else None
     results = []
@@ -680,12 +871,16 @@ def list_exams(
             continue
         if source == "reviewed" and exam.status_validation != "valido":
             continue
+        if not _exam_matches_queue_state(session, exam, context, queue_state):
+            continue
+        if not _exam_matches_decision_region(session, exam, context, decision, region):
+            continue
         if normalized_search:
             haystack = f"{exam.id} {exam.exam_code}".lower()
             if normalized_search not in haystack:
                 continue
 
-        results.append(_exam_payload(session, exam))
+        results.append(_exam_payload(session, exam, context=context))
 
     return results
 
@@ -1023,9 +1218,12 @@ def dashboard_stats(
 ) -> dict:
     exams = session.exec(select(Exam)).all()
     reviews = session.exec(select(Review).where(Review.status_after == "valido")).all()
+    context = active_validation_context()
     now = datetime.utcnow()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = now - timedelta(days=7)
+    queue_state_counts = _queue_state_counts(session, exams, context)
+    cross_filter_counts = _cross_filter_counts(session, exams, context)
 
     return {
         "reviewed_today": sum(1 for review in reviews if review.created_at >= today_start),
@@ -1043,4 +1241,7 @@ def dashboard_stats(
             for exam in exams
             if exam.status_validation == "valido" and exam.review_result == "alterado"
         ),
+        "queue_state_counts": queue_state_counts,
+        "decision_counts": cross_filter_counts["decision"],
+        "region_counts": cross_filter_counts["region"],
     }
