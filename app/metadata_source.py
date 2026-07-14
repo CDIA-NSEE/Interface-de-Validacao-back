@@ -1,8 +1,13 @@
 import os
-import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
+from sqlalchemy import create_engine, func, or_, select
+from sqlalchemy.orm import Session
+
 from app.config_source import load_diagnosis_groupings, normalize_text, standardize_diagnosis
+from app.metadata_models import METADATA_PAYLOAD_FIELDS, MetadataRecord
 
 try:
     import zstandard as zstd
@@ -17,27 +22,40 @@ def metadata_database_path() -> Path:
     return Path(os.getenv("METADATA_DATABASE_PATH", DEFAULT_METADATA_PATH))
 
 
+def _sqlite_url(path: Path) -> str:
+    return f"sqlite:///{path.as_posix()}"
+
+
+def _metadata_engine(path: Path):
+    return create_engine(_sqlite_url(path), connect_args={"check_same_thread": False})
+
+
+@contextmanager
+def _metadata_session(path: Path) -> Iterator[Session]:
+    engine = _metadata_engine(path)
+    try:
+        with Session(engine) as session:
+            yield session
+    finally:
+        engine.dispose()
+
+
+def _metadata_payload_columns():
+    return [getattr(MetadataRecord, field) for field in METADATA_PAYLOAD_FIELDS]
+
+
 def load_metadata_records() -> list[dict]:
     path = metadata_database_path()
     if not path.exists():
         return []
 
-    with sqlite3.connect(path) as connection:
-        connection.row_factory = sqlite3.Row
-        rows = connection.execute(
-            """
-            SELECT id, archive_name, hash, image_path, processed_at,
-                   birth_date, birth_date_flag, sex, sex_flag,
-                   exam_date, exam_date_flag, exam_time, exam_time_flag,
-                   comments, comments_flag, conclusions, conclusions_flag,
-                   notes, notes_flag, age, age_flag, weight, weight_flag,
-                   height, height_flag
-            FROM metadata
-            WHERE error IS NULL OR TRIM(error) = ''
-            ORDER BY id
-            """
-        ).fetchall()
-    return [dict(row) for row in rows]
+    with _metadata_session(path) as session:
+        rows = session.execute(
+            select(*_metadata_payload_columns())
+            .where(or_(MetadataRecord.error.is_(None), func.trim(MetadataRecord.error) == ""))
+            .order_by(MetadataRecord.id)
+        ).mappings()
+        return [dict(row) for row in rows]
 
 
 def conclusion_items(conclusions: str | None) -> list[str]:
@@ -77,17 +95,16 @@ def load_metadata_image(metadata_id: int | None) -> dict | None:
     if not path.exists():
         return None
 
-    with sqlite3.connect(path) as connection:
-        row = connection.execute(
-            "SELECT image_zst FROM metadata WHERE id = ?",
-            (metadata_id,),
-        ).fetchone()
+    with _metadata_session(path) as session:
+        image_zst = session.scalar(
+            select(MetadataRecord.image_zst).where(MetadataRecord.id == metadata_id)
+        )
 
-    if not row or not row[0]:
+    if not image_zst:
         return None
 
     try:
-        image_bytes = zstd.ZstdDecompressor().decompress(row[0])
+        image_bytes = zstd.ZstdDecompressor().decompress(image_zst)
     except zstd.ZstdError:
         return None
 
