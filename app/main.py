@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+import os
 import re
 from typing import Optional
 
@@ -44,6 +45,35 @@ VALID_REVIEW_RESULTS = {"sem_alteracao", "alterado"}
 VALID_QUEUE_STATES = {"all", "start", "validated", "completed"}
 VALID_DECISION_FILTERS = {"confirmed", "rejected"}
 VALID_REGION_FILTERS = {"with_region", "without_region"}
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+    "http://localhost:5175",
+    "http://127.0.0.1:5175",
+]
+DEFAULT_CORS_ORIGIN_REGEX = r"^http://192\.168\.\d{1,3}\.\d{1,3}:517[3-5]$"
+
+
+def _split_csv_env(value: str | None) -> list[str]:
+    if value is None:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _cors_origins() -> list[str]:
+    configured_origins = os.getenv("BACKEND_CORS_ORIGINS")
+    if configured_origins is None:
+        return DEFAULT_CORS_ORIGINS
+    return _split_csv_env(configured_origins)
+
+
+def _cors_origin_regex() -> str | None:
+    configured_regex = os.getenv("BACKEND_CORS_ORIGIN_REGEX")
+    if configured_regex is None:
+        return DEFAULT_CORS_ORIGIN_REGEX
+    return configured_regex.strip() or None
 
 
 @asynccontextmanager
@@ -66,15 +96,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-        "http://localhost:5175",
-        "http://127.0.0.1:5175",
-    ],
-    allow_origin_regex=r"^http://192\.168\.\d{1,3}\.\d{1,3}:517[3-5]$",
+    allow_origins=_cors_origins(),
+    allow_origin_regex=_cors_origin_regex(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
