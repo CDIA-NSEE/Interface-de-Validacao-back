@@ -13,3 +13,5 @@ data/
 *.db-shm
 *.db-wal
 *.log
+tests/.tmp/
+tmp_tests/

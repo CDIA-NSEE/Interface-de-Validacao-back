@@ -1,7 +1,6 @@
 from contextlib import closing
 import os
 import sqlite3
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -10,6 +9,8 @@ from sqlalchemy import event
 
 from app import metadata_source
 
+
+TEST_TEMP_ROOT = Path(__file__).resolve().parents[1] / "tmp_tests"
 
 METADATA_COLUMNS = """
     id INTEGER PRIMARY KEY,
@@ -76,9 +77,11 @@ def _metadata_row(row_id: int, error: str | None = None, image_zst: bytes | None
 
 class MetadataSourceTest(unittest.TestCase):
     def setUp(self):
-        self.tempdir = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tempdir.cleanup)
-        self.db_path = Path(self.tempdir.name) / "metadata.db"
+        TEST_TEMP_ROOT.mkdir(exist_ok=True)
+        self.db_path = TEST_TEMP_ROOT / f"{self._testMethodName}.db"
+        if self.db_path.exists():
+            self.db_path.unlink()
+        self.addCleanup(lambda: self.db_path.exists() and self.db_path.unlink())
 
     def _create_database(self, rows: list[dict]) -> None:
         with closing(sqlite3.connect(self.db_path)) as connection:
@@ -98,6 +101,58 @@ class MetadataSourceTest(unittest.TestCase):
     def test_missing_metadata_database_returns_empty_records(self):
         with self._with_metadata_path():
             self.assertEqual(metadata_source.load_metadata_records(), [])
+
+    def test_default_metadata_path_constant_points_to_back_data_directory(self):
+        self.assertEqual(
+            metadata_source.DEFAULT_METADATA_PATH,
+            metadata_source.BACKEND_ROOT / "data" / "database" / "metadata.db",
+        )
+
+    def test_metadata_database_path_uses_default_when_present(self):
+        default_path = TEST_TEMP_ROOT / "default-metadata.db"
+        legacy_path = TEST_TEMP_ROOT / "missing-legacy-metadata.db"
+        if default_path.exists():
+            default_path.unlink()
+        default_path.touch()
+        self.addCleanup(lambda: default_path.exists() and default_path.unlink())
+
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            metadata_source, "DEFAULT_METADATA_PATH", default_path
+        ), patch.object(metadata_source, "LEGACY_METADATA_PATH", legacy_path):
+            self.assertEqual(
+                metadata_source.metadata_database_path(),
+                default_path,
+            )
+
+    def test_metadata_database_path_uses_absolute_env_override(self):
+        configured_path = self.db_path
+
+        with patch.dict(os.environ, {"METADATA_DATABASE_PATH": str(configured_path)}, clear=True):
+            self.assertEqual(metadata_source.metadata_database_path(), configured_path)
+
+    def test_metadata_database_path_resolves_relative_env_from_back_root(self):
+        with patch.dict(
+            os.environ,
+            {"METADATA_DATABASE_PATH": "data/database/custom-metadata.db"},
+            clear=True,
+        ):
+            self.assertEqual(
+                metadata_source.metadata_database_path(),
+                metadata_source.BACKEND_ROOT / "data" / "database" / "custom-metadata.db",
+            )
+
+    def test_metadata_database_path_falls_back_to_legacy_data_directory(self):
+        default_path = TEST_TEMP_ROOT / "missing-default-metadata.db"
+        legacy_path = TEST_TEMP_ROOT / "legacy-metadata.db"
+        if legacy_path.exists():
+            legacy_path.unlink()
+        legacy_path.touch()
+        self.addCleanup(lambda: legacy_path.exists() and legacy_path.unlink())
+
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            metadata_source, "DEFAULT_METADATA_PATH", default_path
+        ), patch.object(metadata_source, "LEGACY_METADATA_PATH", legacy_path):
+            self.assertEqual(metadata_source.metadata_database_path(), legacy_path)
 
     def test_load_metadata_records_filters_errors_and_orders_by_id(self):
         self._create_database(

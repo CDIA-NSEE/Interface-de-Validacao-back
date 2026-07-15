@@ -18,21 +18,27 @@ Variaveis principais:
 - `AUTH_SECRET_KEY`: chave usada para assinar tokens JWT. Troque fora do desenvolvimento local.
 - `DEFAULT_USER_*` e `DEFAULT_ADMIN_*`: usuarios criados pela seed inicial quando configurados.
 - `BP_ALLOWED_EMAIL_DOMAINS`: lista CSV de dominios aceitos para usuarios nao administradores.
-- `METADATA_DATABASE_PATH`: caminho para o SQLite externo de metadados extraidos dos ECGs. Esse banco e separado do banco operacional.
+- `METADATA_DATABASE_PATH`: caminho opcional para o SQLite externo de metadados extraidos dos ECGs. Caminhos relativos sao resolvidos a partir da raiz do back.
 - `BACKEND_CORS_ORIGINS`: lista CSV de origens permitidas para o front.
 - `BACKEND_CORS_ORIGIN_REGEX`: regex opcional para origens permitidas.
 
 ## Dados externos
 
-A pasta `data/` nao deve ser versionada. PDFs, arquivos compactados, imagens reais de ECG e `metadata.db` devem ser tratados como dados externos ao repositorio.
+A pasta `data/` dentro do back nao deve ser versionada. PDFs, arquivos compactados, imagens reais de ECG, agrupamentos de referencia e `metadata.db` devem ser tratados como dados externos ao repositorio.
 
-Para usar metadados reais, configure:
+Por padrao, o back procura metadados reais em:
+
+```text
+data/database/metadata.db
+```
+
+Para usar outro arquivo, configure:
 
 ```env
 METADATA_DATABASE_PATH=C:/caminho/para/metadata.db
 ```
 
-Se o arquivo nao existir, a seed usa dados simulados de desenvolvimento.
+Se o arquivo nao existir, a seed usa dados simulados de desenvolvimento. Se o arquivo real existir e o banco operacional local ainda tiver a seed simulada, a seed remove os exames simulados conhecidos e importa os exames reais por `metadata_hash`.
 
 O back usa ORM tambem para ler `metadata.db`, mas esse arquivo continua sendo uma fonte externa somente leitura para a aplicacao. O schema da tabela `metadata` nao e criado, migrado, resetado ou versionado por este repositorio; ele deve ser fornecido pronto pelo processo que gera os metadados.
 
