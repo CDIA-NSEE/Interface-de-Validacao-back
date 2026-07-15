@@ -15,11 +15,20 @@ except ImportError:  # pragma: no cover - optional fallback for environments not
     zstd = None
 
 
-DEFAULT_METADATA_PATH = Path(__file__).resolve().parents[2] / "data" / "database" / "metadata.db"
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_METADATA_PATH = BACKEND_ROOT / "data" / "database" / "metadata.db"
+LEGACY_METADATA_PATH = BACKEND_ROOT.parent / "data" / "database" / "metadata.db"
 
 
 def metadata_database_path() -> Path:
-    return Path(os.getenv("METADATA_DATABASE_PATH", DEFAULT_METADATA_PATH))
+    configured_path = os.getenv("METADATA_DATABASE_PATH")
+    if configured_path:
+        path = Path(configured_path)
+        return path if path.is_absolute() else BACKEND_ROOT / path
+
+    if DEFAULT_METADATA_PATH.exists() or not LEGACY_METADATA_PATH.exists():
+        return DEFAULT_METADATA_PATH
+    return LEGACY_METADATA_PATH
 
 
 def _sqlite_url(path: Path) -> str:

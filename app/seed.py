@@ -6,7 +6,16 @@ from sqlmodel import Session, select
 from app.auth import get_password_hash
 from app.config_source import load_validation_calendar
 from app.metadata_source import conclusion_items, load_metadata_records
-from app.models import Diagnosis, Exam, Patient, Review, User, ValidationCycle
+from app.models import (
+    Diagnosis,
+    DiagnosisRegion,
+    DiagnosisValidation,
+    Exam,
+    Patient,
+    Review,
+    User,
+    ValidationCycle,
+)
 
 
 SIMULATED_CATEGORIES = {"Rotina", "Ambulatorial", "Ocupacional", "Emergencia"}
@@ -61,17 +70,32 @@ def _is_abnormal(diagnosis: str) -> bool:
 
 def _remove_simulated_data(session: Session) -> None:
     exams = session.exec(select(Exam).where(Exam.exam_code.in_(SIMULATED_EXAM_CODES))).all()
+    if not exams:
+        return
+
     exam_ids = {exam.id for exam in exams}
     patient_ids = {exam.patient_id for exam in exams}
 
+    for validation in session.exec(
+        select(DiagnosisValidation).where(DiagnosisValidation.exam_id.in_(exam_ids))
+    ).all():
+        session.delete(validation)
+    for region in session.exec(select(DiagnosisRegion).where(DiagnosisRegion.exam_id.in_(exam_ids))).all():
+        session.delete(region)
     for diagnosis in session.exec(select(Diagnosis).where(Diagnosis.exam_id.in_(exam_ids))).all():
         session.delete(diagnosis)
     for review in session.exec(select(Review).where(Review.exam_id.in_(exam_ids))).all():
         session.delete(review)
     for exam in exams:
         session.delete(exam)
-    for patient in session.exec(select(Patient).where(Patient.id.in_(patient_ids))).all():
-        session.delete(patient)
+    session.flush()
+
+    for patient_id in patient_ids:
+        has_remaining_exam = session.exec(select(Exam).where(Exam.patient_id == patient_id)).first()
+        if not has_remaining_exam:
+            patient = session.get(Patient, patient_id)
+            if patient:
+                session.delete(patient)
     session.commit()
 
 
@@ -80,10 +104,12 @@ def _import_metadata_database(session: Session) -> bool:
     if not records:
         return False
 
-    imported_hashes = set(session.exec(select(Exam.metadata_hash)).all())
-    if not any(imported_hashes):
-        _remove_simulated_data(session)
-        imported_hashes.clear()
+    _remove_simulated_data(session)
+    imported_hashes = {
+        metadata_hash
+        for metadata_hash in session.exec(select(Exam.metadata_hash)).all()
+        if metadata_hash
+    }
 
     for record in records:
         if record["hash"] in imported_hashes:
@@ -138,6 +164,7 @@ def _import_metadata_database(session: Session) -> bool:
                     )
                 )
         session.commit()
+        imported_hashes.add(record["hash"])
 
     return True
 
