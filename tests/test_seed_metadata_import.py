@@ -11,6 +11,7 @@ from app.models import (
     DiagnosisRegion,
     DiagnosisValidation,
     Exam,
+    ExamDraft,
     Patient,
     Review,
 )
@@ -124,6 +125,13 @@ class SeedMetadataImportTest(unittest.TestCase):
                 status_after="valido",
             )
         )
+        session.add(
+            ExamDraft(
+                exam_id=exam.id,
+                reviewer_id=1,
+                notes="Rascunho do exame simulado.",
+            )
+        )
         session.commit()
         return patient.id, exam.id
 
@@ -144,6 +152,7 @@ class SeedMetadataImportTest(unittest.TestCase):
             self.assertEqual(session.exec(select(DiagnosisRegion)).all(), [])
             self.assertEqual(session.exec(select(DiagnosisValidation)).all(), [])
             self.assertEqual(session.exec(select(Review)).all(), [])
+            self.assertEqual(session.exec(select(ExamDraft)).all(), [])
             self.assertIsNone(session.exec(select(Exam).where(Exam.exam_code == "A03B5F")).first())
             self.assertIsNone(
                 session.exec(select(Patient).where(Patient.name == "Paciente Simulado")).first()

@@ -57,3 +57,7 @@ class ExamValidate(BaseModel):
     review_result: Literal["sem_alteracao", "alterado"]
     notes: Optional[str] = None
     doctor_name: Optional[str] = None
+
+
+class ExamDraftUpdate(BaseModel):
+    notes: Optional[str] = None
