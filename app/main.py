@@ -26,11 +26,12 @@ from app.database import (
     should_reset_database_on_startup,
 )
 from app.metadata_source import load_diagnosis_options, load_metadata_image
-from app.models import Diagnosis, DiagnosisRegion, DiagnosisValidation, Exam, Patient, Review, User
+from app.models import ExamDraft, Diagnosis, DiagnosisRegion, DiagnosisValidation, Exam, Patient, Review, User
 from app.schemas import (
     DiagnosisCreate,
     DiagnosisRegionPayload,
     DiagnosisReview,
+    ExamDraftUpdate,
     ExamValidate,
     LoginRequest,
     StatusUpdate,
@@ -352,11 +353,20 @@ def _review_timestamps(session: Session, exam: Exam) -> tuple[Optional[datetime]
     return None, completed_at
 
 
+def _exam_draft_for_user(session: Session, exam_id: int, reviewer_id: int) -> ExamDraft | None:
+    return session.exec(
+        select(ExamDraft)
+        .where(ExamDraft.exam_id == exam_id)
+        .where(ExamDraft.reviewer_id == reviewer_id)
+    ).first()
+
+
 def _exam_payload(
     session: Session,
     exam: Exam,
     include_details: bool = False,
     context: dict | None = None,
+    current_user: User | None = None,
 ) -> dict:
     context = context or active_validation_context()
     patient = session.get(Patient, exam.patient_id)
@@ -382,6 +392,10 @@ def _exam_payload(
         "patient": _patient_payload(patient),
         "validation_context": context,
     }
+
+    if current_user and current_user.id is not None:
+        draft = _exam_draft_for_user(session, exam.id, current_user.id)
+        payload["draft_notes"] = draft.notes if draft else None
 
     if include_details:
         diagnoses = session.exec(
@@ -747,7 +761,13 @@ def validation_next(
     next_exam = queue[0] if queue else None
     return {
         "context": context,
-        "exam": _exam_payload(session, next_exam, include_details=True, context=context)
+        "exam": _exam_payload(
+            session,
+            next_exam,
+            include_details=True,
+            context=context,
+            current_user=current_user,
+        )
         if next_exam
         else None,
     }
@@ -819,7 +839,13 @@ def review_validation_diagnosis(
     session.add(exam)
     session.commit()
     session.refresh(exam)
-    return _exam_payload(session, exam, include_details=True, context=context)
+    return _exam_payload(
+        session,
+        exam,
+        include_details=True,
+        context=context,
+        current_user=current_user,
+    )
 
 
 @app.get("/support/contact")
@@ -915,7 +941,38 @@ def get_exam(
     session: Session = Depends(get_session),
 ) -> dict:
     exam = _get_exam_or_404(session, exam_id)
-    return _exam_payload(session, exam, include_details=True)
+    return _exam_payload(session, exam, include_details=True, current_user=current_user)
+
+
+@app.put("/exams/{exam_id}/draft")
+def save_exam_draft(
+    exam_id: int,
+    payload: ExamDraftUpdate,
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    exam = _get_exam_or_404(session, exam_id)
+    notes = (payload.notes or "").strip() or None
+    draft = _exam_draft_for_user(session, exam.id, current_user.id)
+
+    if draft and notes is None:
+        session.delete(draft)
+    elif draft:
+        draft.notes = notes
+        draft.updated_at = datetime.utcnow()
+        session.add(draft)
+    elif notes is not None:
+        session.add(
+            ExamDraft(
+                exam_id=exam.id,
+                reviewer_id=current_user.id,
+                notes=notes,
+            )
+        )
+
+    session.commit()
+    session.refresh(exam)
+    return _exam_payload(session, exam, include_details=True, current_user=current_user)
 
 
 @app.get("/exams/{exam_id}/image", response_model=None)
@@ -972,7 +1029,7 @@ def update_exam_status(
         )
     session.commit()
     session.refresh(exam)
-    return _exam_payload(session, exam, include_details=True)
+    return _exam_payload(session, exam, include_details=True, current_user=current_user)
 
 
 @app.post("/exams/{exam_id}/diagnoses", status_code=status.HTTP_201_CREATED)
@@ -1211,8 +1268,10 @@ def validate_exam(
         )
 
     exam = _get_exam_or_404(session, exam_id)
+    draft = _exam_draft_for_user(session, exam.id, current_user.id)
     status_before = exam.status_validation
     now = datetime.utcnow()
+    review_notes = payload.notes if payload.notes is not None else (draft.notes if draft else None)
 
     exam.status_validation = "valido"
     exam.review_result = payload.review_result
@@ -1225,13 +1284,15 @@ def validate_exam(
         status_before=status_before,
         status_after="valido",
         review_result=payload.review_result,
-        notes=payload.notes,
+        notes=review_notes,
         created_at=now,
     )
     session.add(review)
+    if draft:
+        session.delete(draft)
     session.commit()
     session.refresh(exam)
-    return _exam_payload(session, exam, include_details=True)
+    return _exam_payload(session, exam, include_details=True, current_user=current_user)
 
 
 @app.get("/dashboard/stats")

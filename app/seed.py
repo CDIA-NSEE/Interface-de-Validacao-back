@@ -11,6 +11,7 @@ from app.models import (
     DiagnosisRegion,
     DiagnosisValidation,
     Exam,
+    ExamDraft,
     Patient,
     Review,
     User,
@@ -86,6 +87,8 @@ def _remove_simulated_data(session: Session) -> None:
         session.delete(diagnosis)
     for review in session.exec(select(Review).where(Review.exam_id.in_(exam_ids))).all():
         session.delete(review)
+    for draft in session.exec(select(ExamDraft).where(ExamDraft.exam_id.in_(exam_ids))).all():
+        session.delete(draft)
     for exam in exams:
         session.delete(exam)
     session.flush()
