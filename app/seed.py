@@ -3,7 +3,6 @@ import os
 
 from sqlmodel import Session, select
 
-from app.auth import get_password_hash
 from app.config_source import load_validation_calendar
 from app.metadata_source import conclusion_items, load_metadata_records
 from app.models import (
@@ -193,61 +192,13 @@ def _normalize_simulated_metadata(session: Session) -> None:
 
 
 def _seed_default_user(session: Session) -> None:
-    if not DEFAULT_USER_USERNAME or not DEFAULT_USER_PASSWORD:
-        return
-
-    user = session.exec(select(User).where(User.username == DEFAULT_USER_USERNAME)).first()
-    if user:
-        changed = False
-        if user.full_name != DEFAULT_USER_FULL_NAME:
-            user.full_name = DEFAULT_USER_FULL_NAME
-            changed = True
-        if user.role != "doctor":
-            user.role = "doctor"
-            changed = True
-        if changed:
-            session.add(user)
-            session.commit()
-        return
-
-    session.add(
-        User(
-            username=DEFAULT_USER_USERNAME,
-            full_name=DEFAULT_USER_FULL_NAME or DEFAULT_USER_USERNAME,
-            hashed_password=get_password_hash(DEFAULT_USER_PASSWORD),
-            role="doctor",
-        )
-    )
-    session.commit()
+    # No-op: users are managed by Cognito, synced on first login
+    return
 
 
 def _seed_admin_user(session: Session) -> None:
-    if not DEFAULT_ADMIN_USERNAME or not DEFAULT_ADMIN_PASSWORD:
-        return
-
-    user = session.exec(select(User).where(User.username == DEFAULT_ADMIN_USERNAME)).first()
-    if user:
-        changed = False
-        if user.full_name != DEFAULT_ADMIN_FULL_NAME:
-            user.full_name = DEFAULT_ADMIN_FULL_NAME
-            changed = True
-        if user.role != "admin":
-            user.role = "admin"
-            changed = True
-        if changed:
-            session.add(user)
-            session.commit()
-        return
-
-    session.add(
-        User(
-            username=DEFAULT_ADMIN_USERNAME,
-            full_name=DEFAULT_ADMIN_FULL_NAME or DEFAULT_ADMIN_USERNAME,
-            hashed_password=get_password_hash(DEFAULT_ADMIN_PASSWORD),
-            role="admin",
-        )
-    )
-    session.commit()
+    # No-op: users are managed by Cognito, synced on first login
+    return
 
 
 def _seed_validation_cycle(session: Session) -> None:

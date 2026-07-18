@@ -10,7 +10,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import desc
 from sqlmodel import Session, select
 
-from app.auth import authenticate_user, create_access_token, get_current_active_user
+from app.auth import get_current_active_user, get_current_user
 from app.config_source import (
     active_validation_context,
     email_domain_allowed,
@@ -26,16 +26,13 @@ from app.database import (
     should_reset_database_on_startup,
 )
 from app.metadata_source import load_diagnosis_options, load_metadata_image
-from app.models import ExamDraft, Diagnosis, DiagnosisRegion, DiagnosisValidation, Exam, Patient, Review, User
+from app.models import Diagnosis, DiagnosisRegion, DiagnosisValidation, Exam, Patient, Review, User
 from app.schemas import (
     DiagnosisCreate,
     DiagnosisRegionPayload,
     DiagnosisReview,
-    ExamDraftUpdate,
     ExamValidate,
-    LoginRequest,
     StatusUpdate,
-    TokenResponse,
     UserRead,
 )
 from app.seed import seed_database
@@ -54,7 +51,7 @@ DEFAULT_CORS_ORIGINS = [
     "http://localhost:5175",
     "http://127.0.0.1:5175",
 ]
-DEFAULT_CORS_ORIGIN_REGEX = r"^http://192\.168\.\d{1,3}\.\d{1,3}:517[3-5]$"
+DEFAULT_CORS_ORIGIN_REGEX = r"^https://.*\.amplifyapp\.com$"
 
 
 def _split_csv_env(value: str | None) -> list[str]:
@@ -694,35 +691,6 @@ def _user_read(user: User) -> UserRead:
     )
 
 
-@app.post("/auth/login", response_model=TokenResponse)
-def login(payload: LoginRequest, session: Session = Depends(get_session)) -> TokenResponse:
-    identifier = payload.identifier
-    if not identifier or not payload.password:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Informe e-mail/usuario e senha.",
-        )
-
-    user = authenticate_user(session, identifier, payload.password)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Usuário ou senha inválidos.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    if user.role != "admin" and not email_domain_allowed(user.username):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="E-mail fora do dominio institucional BP configurado.",
-        )
-
-    return TokenResponse(
-        access_token=create_access_token(user.username),
-        user=_user_read(user),
-    )
-
-
 @app.get("/auth/me", response_model=UserRead)
 def read_current_user(current_user: User = Depends(get_current_active_user)) -> UserRead:
     return _user_read(current_user)
@@ -1329,3 +1297,24 @@ def dashboard_stats(
         "decision_counts": cross_filter_counts["decision"],
         "region_counts": cross_filter_counts["region"],
     }
+
+
+# Mangum handler for AWS Lambda
+from mangum import Mangum
+
+# Initialize DB on first request (since lifespan is off)
+_db_initialized = False
+
+@app.middleware("http")
+async def init_db_middleware(request, call_next):
+    global _db_initialized
+    if not _db_initialized:
+        if should_reset_database_on_startup():
+            reset_db_and_tables()
+        else:
+            create_db_and_tables()
+        _db_initialized = True
+    response = await call_next(request)
+    return response
+
+handler = Mangum(app, lifespan="off")

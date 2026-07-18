@@ -132,9 +132,9 @@ class User(SQLModel, table=True):
     __tablename__ = "users"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    username: str = Field(index=True, unique=True)
+    username: str = Field(index=True, unique=True)  # Cognito sub
     full_name: str
-    hashed_password: str
     role: str = Field(default="doctor", index=True)
     is_active: bool = Field(default=True, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
