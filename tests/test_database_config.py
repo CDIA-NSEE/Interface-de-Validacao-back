@@ -1,7 +1,11 @@
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+from sqlalchemy import inspect, text
+from sqlmodel import create_engine
+
+from app import database
 from app.database import database_connect_args, should_reset_database_on_startup
 
 
@@ -54,6 +58,69 @@ class DatabaseConfigTest(unittest.TestCase):
                 clear=True,
             ):
                 self.assertFalse(should_reset_database_on_startup())
+
+    def test_create_and_reset_database_apply_schema_and_migrations(self):
+        with patch.object(database.SQLModel.metadata, "create_all") as create_all, patch.object(
+            database.SQLModel.metadata, "drop_all"
+        ) as drop_all, patch.object(database, "_migrate_columns") as migrate:
+            database.create_db_and_tables()
+            create_all.assert_called_once_with(database.engine)
+            drop_all.assert_not_called()
+            migrate.assert_called_once_with()
+
+            create_all.reset_mock()
+            migrate.reset_mock()
+            database.reset_db_and_tables()
+            drop_all.assert_called_once_with(database.engine)
+            create_all.assert_called_once_with(database.engine)
+            migrate.assert_called_once_with()
+
+    def test_migrate_columns_updates_legacy_schema(self):
+        engine = create_engine("sqlite://")
+        try:
+            with engine.begin() as connection:
+                connection.execute(text("CREATE TABLE diagnoses (id INTEGER PRIMARY KEY)"))
+                connection.execute(text("CREATE TABLE patients (id INTEGER PRIMARY KEY)"))
+                connection.execute(text("CREATE TABLE exams (id INTEGER PRIMARY KEY)"))
+                connection.execute(text("CREATE TABLE users (id INTEGER PRIMARY KEY)"))
+
+            with patch.object(database, "engine", engine):
+                database._migrate_columns()
+
+            inspector = inspect(engine)
+            self.assertTrue(
+                {"source", "review_status"}.issubset(
+                    {column["name"] for column in inspector.get_columns("diagnoses")}
+                )
+            )
+            self.assertIn(
+                "birth_date",
+                {column["name"] for column in inspector.get_columns("patients")},
+            )
+            self.assertTrue(
+                {"metadata_id", "metadata_hash", "exam_time", "comments", "source_notes"}.issubset(
+                    {column["name"] for column in inspector.get_columns("exams")}
+                )
+            )
+            self.assertIn(
+                "role",
+                {column["name"] for column in inspector.get_columns("users")},
+            )
+        finally:
+            engine.dispose()
+
+    def test_get_session_yields_and_closes_session_context(self):
+        expected_session = MagicMock()
+        session_context = MagicMock()
+        session_context.__enter__.return_value = expected_session
+
+        with patch.object(database, "Session", return_value=session_context):
+            sessions = database.get_session()
+            self.assertIs(next(sessions), expected_session)
+            with self.assertRaises(StopIteration):
+                next(sessions)
+
+        session_context.__exit__.assert_called_once()
 
 
 if __name__ == "__main__":

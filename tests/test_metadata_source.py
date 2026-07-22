@@ -242,6 +242,72 @@ class MetadataSourceTest(unittest.TestCase):
         with self._with_metadata_path(), patch.object(metadata_source, "zstd", None):
             self.assertIsNone(metadata_source.load_metadata_image(1))
 
+    def test_conclusion_items_ignores_empty_lines(self):
+        self.assertEqual(metadata_source.conclusion_items(None), [])
+        self.assertEqual(metadata_source.conclusion_items("   \n\n"), [])
+        self.assertEqual(
+            metadata_source.conclusion_items(" Ritmo sinusal \n\n Infarto agudo "),
+            ["Ritmo sinusal", "Infarto agudo"],
+        )
+
+    def test_load_diagnosis_options_deduplicates_groupings_and_metadata(self):
+        groups = [
+            {"standard_text": "Ritmo sinusal"},
+            {"standard_text": "ritmo  sinusal"},
+            {"standard_text": "Infarto agudo"},
+        ]
+        records = [
+            {"conclusions_flag": 1, "conclusions": "RITMO SINUSAL\nTaquicardia sinusal"},
+            {"conclusions_flag": 0, "conclusions": "Ignorado"},
+        ]
+
+        with patch.object(
+            metadata_source,
+            "load_diagnosis_groupings",
+            return_value=groups,
+        ), patch.object(
+            metadata_source,
+            "load_metadata_records",
+            return_value=records,
+        ), patch.object(
+            metadata_source,
+            "standardize_diagnosis",
+            side_effect=lambda value: value.title(),
+        ):
+            options = metadata_source.load_diagnosis_options()
+
+        self.assertEqual(
+            options,
+            ["Ritmo sinusal", "Infarto agudo", "Taquicardia Sinusal"],
+        )
+
+    def test_load_metadata_image_detects_supported_and_fallback_media_types(self):
+        if metadata_source.zstd is None:
+            self.skipTest("zstandard is not installed")
+
+        compressor = metadata_source.zstd.ZstdCompressor()
+        self._create_database(
+            [
+                _metadata_row(1, image_zst=compressor.compress(b"BM-bitmap")),
+                _metadata_row(2, image_zst=compressor.compress(b"\xff\xd8-jpeg")),
+                _metadata_row(3, image_zst=compressor.compress(b"unknown")),
+            ]
+        )
+
+        with self._with_metadata_path():
+            self.assertEqual(
+                metadata_source.load_metadata_image(1)["media_type"],
+                "image/bmp",
+            )
+            self.assertEqual(
+                metadata_source.load_metadata_image(2)["media_type"],
+                "image/jpeg",
+            )
+            self.assertEqual(
+                metadata_source.load_metadata_image(3)["media_type"],
+                "application/octet-stream",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

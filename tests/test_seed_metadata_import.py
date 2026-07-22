@@ -14,6 +14,7 @@ from app.models import (
     ExamDraft,
     Patient,
     Review,
+    ValidationCycle,
 )
 
 
@@ -218,6 +219,109 @@ class SeedMetadataImportTest(unittest.TestCase):
             self.assertEqual(exams[0].metadata_hash, duplicate_hash)
             self.assertEqual(len(session.exec(select(Patient)).all()), 1)
             self.assertEqual(len(session.exec(select(Diagnosis)).all()), 1)
+
+    def test_seed_helpers_handle_bmi_dates_and_abnormal_diagnoses(self):
+        self.assertEqual(seed._bmi(0, 1.7), 0)
+        self.assertEqual(seed._bmi(70, 0), 0)
+        self.assertEqual(seed._bmi(70, 170), 24.2)
+        self.assertEqual(seed._parse_date("21/07/2026"), datetime(2026, 7, 21))
+        self.assertFalse(seed._is_abnormal("RITMO SINUSAL"))
+        self.assertFalse(
+            seed._is_abnormal("ELETROCARDIOGRAMA DENTRO DOS LIMITES DA NORMALIDADE")
+        )
+        self.assertTrue(seed._is_abnormal("INFARTO AGUDO"))
+
+    def test_validation_cycle_is_created_then_updated(self):
+        first_calendar = {
+            "cycle_key": "cycle-test",
+            "cycle_label": "Ciclo inicial",
+            "general_review_day": 30,
+        }
+        updated_calendar = {
+            **first_calendar,
+            "cycle_label": "Ciclo atualizado",
+            "general_review_day": 28,
+        }
+
+        with self._session() as session, patch.object(
+            seed,
+            "load_validation_calendar",
+            side_effect=[first_calendar, updated_calendar],
+        ):
+            seed._seed_validation_cycle(session)
+            seed._seed_validation_cycle(session)
+            cycle = session.exec(select(ValidationCycle)).one()
+
+        self.assertEqual(cycle.label, "Ciclo atualizado")
+        self.assertEqual(cycle.general_review_day, 28)
+
+    def test_existing_seed_is_normalized_when_metadata_is_unavailable(self):
+        with self._session() as session:
+            patient = Patient(
+                name="Paciente legado",
+                age=40,
+                sex="Feminino",
+                weight=60,
+                height=1.6,
+                bmi=23.4,
+            )
+            session.add(patient)
+            session.commit()
+            session.refresh(patient)
+            exam = Exam(
+                exam_code="LEGACY01",
+                patient_id=patient.id,
+                exam_date=datetime(2026, 7, 21).date(),
+                category="Rotina",
+                exam_type="ECG seriado",
+            )
+            session.add(exam)
+            session.commit()
+
+            with patch.object(seed, "_import_metadata_database", return_value=False), patch.object(
+                seed,
+                "load_validation_calendar",
+                return_value={
+                    "cycle_key": "default",
+                    "cycle_label": "Ciclo",
+                    "general_review_day": 30,
+                },
+            ):
+                seed.seed_database(session)
+
+            normalized = session.exec(select(Exam).where(Exam.exam_code == "LEGACY01")).one()
+            self.assertEqual(normalized.category, "ECG")
+            self.assertEqual(normalized.exam_type, "ECG repouso")
+
+    def test_empty_database_receives_complete_simulated_fallback(self):
+        with self._session() as session, patch.object(
+            seed,
+            "_import_metadata_database",
+            return_value=False,
+        ), patch.object(
+            seed,
+            "load_validation_calendar",
+            return_value={
+                "cycle_key": "default",
+                "cycle_label": "Ciclo de teste",
+                "general_review_day": 30,
+            },
+        ):
+            seed.seed_database(session)
+
+            exams = session.exec(select(Exam)).all()
+            patients = session.exec(select(Patient)).all()
+            diagnoses = session.exec(select(Diagnosis)).all()
+            reviews = session.exec(select(Review)).all()
+            cycle = session.exec(select(ValidationCycle)).one()
+
+        self.assertEqual(len(exams), 12)
+        self.assertEqual(len(patients), 12)
+        self.assertEqual(len(diagnoses), 9)
+        self.assertEqual(len(reviews), 7)
+        self.assertTrue(all(exam.category == "ECG" for exam in exams))
+        self.assertTrue(all(exam.exam_type == "ECG repouso" for exam in exams))
+        self.assertEqual(cycle.label, "Ciclo de teste")
 
 
 if __name__ == "__main__":
