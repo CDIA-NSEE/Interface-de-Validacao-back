@@ -14,6 +14,7 @@ Use `.env.example` como referencia quando precisar alterar banco, credenciais in
 Variaveis principais:
 
 - `DATABASE_URL`: banco operacional da aplicacao. O default local e `sqlite:///./ecg_review.db`.
+- `DATABASE_CONNECT_TIMEOUT_SECONDS`: timeout de conexao para PostgreSQL via psycopg2, limitado entre 1 e 30 segundos. O padrao e 5 segundos.
 - `RESET_DATABASE_ON_STARTUP`: recria tabelas ao subir quando `true`. Use `false` como padrao seguro e habilite reset apenas em desenvolvimento local.
 - `AUTH_SECRET_KEY`: chave usada para assinar tokens JWT. Troque fora do desenvolvimento local.
 - `DEFAULT_USER_*` e `DEFAULT_ADMIN_*`: usuarios criados pela seed inicial quando configurados.
@@ -64,7 +65,40 @@ URLs locais:
 
 - API: `http://localhost:8000`
 - Swagger: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
 - OpenAPI JSON: `http://localhost:8000/openapi.json`
+
+## Documentacao e testes pelo Swagger
+
+O Swagger organiza os endpoints por sistema, autenticacao, validacao, suporte,
+exames, diagnosticos e dashboard. O health check e as paginas de documentacao
+sao publicos; os demais endpoints exigem um access token JWT do Amazon Cognito.
+
+Para testar uma rota protegida:
+
+1. Obtenha o access token pelo fluxo Cognito/Amplify da aplicacao.
+2. Abra `http://localhost:8000/docs`.
+3. Clique em `Authorize` e cole somente o token JWT no campo exibido.
+4. Execute o endpoint desejado. O Swagger enviara o header
+   `Authorization: Bearer <token>` automaticamente.
+
+O back continua usando `OAuth2PasswordBearer` para extrair o token das
+requisicoes. A obtencao de usuario e senha nao acontece no Swagger.
+
+## Health check
+
+Use `GET /health` para verificar se a API consegue abrir uma conexao com o
+banco operacional:
+
+```json
+{
+  "status": "ok",
+  "database": "connected"
+}
+```
+
+Quando o banco nao estiver acessivel, o endpoint retorna HTTP `503` com uma
+mensagem sanitizada, sem expor detalhes da conexao.
 
 ## Testes
 

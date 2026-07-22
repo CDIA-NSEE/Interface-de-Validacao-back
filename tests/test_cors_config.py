@@ -38,7 +38,7 @@ class CorsConfigTest(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(
                 _cors_origin_regex(),
-                r"^http://192\.168\.\d{1,3}\.\d{1,3}:517[3-5]$",
+                r"^https://.*\.amplifyapp\.com$",
             )
 
     def test_blank_origin_regex_disables_regex(self):

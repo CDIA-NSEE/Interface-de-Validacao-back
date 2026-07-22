@@ -45,3 +45,12 @@ class ExamValidate(BaseModel):
 
 class ExamDraftUpdate(BaseModel):
     notes: Optional[str] = None
+
+
+class HealthResponse(BaseModel):
+    status: Literal["ok"]
+    database: Literal["connected"]
+
+
+class ErrorResponse(BaseModel):
+    detail: str

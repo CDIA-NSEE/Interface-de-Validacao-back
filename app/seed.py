@@ -13,7 +13,6 @@ from app.models import (
     ExamDraft,
     Patient,
     Review,
-    User,
     ValidationCycle,
 )
 

@@ -7,13 +7,22 @@ from typing import Optional
 from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
-from sqlalchemy import desc
+from mangum import Mangum
+from sqlalchemy import desc, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
-from app.auth import get_current_active_user, get_current_user
+from app.api_docs import (
+    AUTH_BAD_REQUEST_RESPONSES,
+    AUTH_MUTATION_RESPONSES,
+    AUTH_NOT_FOUND_RESPONSES,
+    AUTH_RESPONSES,
+    OPENAPI_TAGS,
+    configure_openapi,
+)
+from app.auth import get_current_active_user
 from app.config_source import (
     active_validation_context,
-    email_domain_allowed,
     load_support_contact,
     normalize_text,
     standardize_diagnosis,
@@ -26,12 +35,24 @@ from app.database import (
     should_reset_database_on_startup,
 )
 from app.metadata_source import load_diagnosis_options, load_metadata_image
-from app.models import Diagnosis, DiagnosisRegion, DiagnosisValidation, Exam, Patient, Review, User
+from app.models import (
+    Diagnosis,
+    DiagnosisRegion,
+    DiagnosisValidation,
+    Exam,
+    ExamDraft,
+    Patient,
+    Review,
+    User,
+)
 from app.schemas import (
     DiagnosisCreate,
     DiagnosisRegionPayload,
     DiagnosisReview,
+    ErrorResponse,
+    ExamDraftUpdate,
     ExamValidate,
+    HealthResponse,
     StatusUpdate,
     UserRead,
 )
@@ -52,6 +73,13 @@ DEFAULT_CORS_ORIGINS = [
     "http://127.0.0.1:5175",
 ]
 DEFAULT_CORS_ORIGIN_REGEX = r"^https://.*\.amplifyapp\.com$"
+PUBLIC_SYSTEM_PATHS = {
+    "/docs",
+    "/docs/oauth2-redirect",
+    "/health",
+    "/openapi.json",
+    "/redoc",
+}
 
 
 def _split_csv_env(value: str | None) -> list[str]:
@@ -88,9 +116,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="ECG Review Platform API",
+    description=(
+        "API da Plataforma de Revisao de ECG para consulta de exames, "
+        "validacao medica de diagnosticos e marcacao de regioes. "
+        "Endpoints protegidos aceitam access tokens JWT do Amazon Cognito."
+    ),
     version="0.1.0",
     lifespan=lifespan,
+    openapi_tags=OPENAPI_TAGS,
+    swagger_ui_parameters={"persistAuthorization": True},
 )
+
+configure_openapi(app)
 
 app.add_middleware(
     CORSMiddleware,
@@ -675,9 +712,35 @@ def _cross_filter_counts(session: Session, exams: list[Exam], context: dict) -> 
     }
 
 
-@app.get("/health")
-def health() -> dict:
-    return {"status": "ok"}
+def _database_connection_is_available() -> bool:
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except SQLAlchemyError:
+        return False
+    return True
+
+
+@app.get(
+    "/health",
+    tags=["Sistema"],
+    summary="Verificar disponibilidade da API",
+    description="Confirma que a API esta acessivel e consegue consultar o banco de dados.",
+    response_model=HealthResponse,
+    responses={
+        503: {
+            "model": ErrorResponse,
+            "description": "Banco de dados indisponivel.",
+        }
+    },
+)
+def health() -> HealthResponse:
+    if not _database_connection_is_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Banco de dados indisponivel.",
+        )
+    return HealthResponse(status="ok", database="connected")
 
 
 def _user_read(user: User) -> UserRead:
@@ -691,19 +754,38 @@ def _user_read(user: User) -> UserRead:
     )
 
 
-@app.get("/auth/me", response_model=UserRead)
+@app.get(
+    "/auth/me",
+    tags=["Autenticacao"],
+    summary="Consultar usuario autenticado",
+    description="Retorna o perfil local associado ao access token validado pelo Amazon Cognito.",
+    response_model=UserRead,
+    responses=AUTH_RESPONSES,
+)
 def read_current_user(current_user: User = Depends(get_current_active_user)) -> UserRead:
     return _user_read(current_user)
 
 
-@app.get("/validation/context")
+@app.get(
+    "/validation/context",
+    tags=["Validacao"],
+    summary="Consultar contexto de validacao",
+    description="Retorna o dia ativo, o diagnostico padronizado e os dados do ciclo atual.",
+    responses=AUTH_RESPONSES,
+)
 def validation_context(
     current_user: User = Depends(get_current_active_user),
 ) -> dict:
     return _context_payload()
 
 
-@app.get("/validation/queue")
+@app.get(
+    "/validation/queue",
+    tags=["Validacao"],
+    summary="Consultar fila de validacao",
+    description="Lista os exames pendentes do contexto ativo e o progresso consolidado da fila.",
+    responses=AUTH_RESPONSES,
+)
 def validation_queue(
     current_user: User = Depends(get_current_active_user),
     session: Session = Depends(get_session),
@@ -719,7 +801,13 @@ def validation_queue(
     }
 
 
-@app.get("/validation/next")
+@app.get(
+    "/validation/next",
+    tags=["Validacao"],
+    summary="Consultar proximo exame",
+    description="Retorna o primeiro exame ainda pendente no contexto diario de validacao.",
+    responses=AUTH_RESPONSES,
+)
 def validation_next(
     current_user: User = Depends(get_current_active_user),
     session: Session = Depends(get_session),
@@ -741,7 +829,13 @@ def validation_next(
     }
 
 
-@app.post("/validation/diagnoses/{diagnosis_id}/review")
+@app.post(
+    "/validation/diagnoses/{diagnosis_id}/review",
+    tags=["Validacao"],
+    summary="Registrar decisao do ciclo",
+    description="Confirma ou rejeita um diagnostico no ciclo ativo e atualiza a fila do exame.",
+    responses=AUTH_MUTATION_RESPONSES,
+)
 def review_validation_diagnosis(
     diagnosis_id: int,
     payload: DiagnosisReview,
@@ -816,14 +910,26 @@ def review_validation_diagnosis(
     )
 
 
-@app.get("/support/contact")
+@app.get(
+    "/support/contact",
+    tags=["Suporte"],
+    summary="Consultar contato de suporte",
+    description="Retorna os canais de suporte configurados para a plataforma.",
+    responses=AUTH_RESPONSES,
+)
 def support_contact(
     current_user: User = Depends(get_current_active_user),
 ) -> dict:
     return load_support_contact()
 
 
-@app.get("/exams")
+@app.get(
+    "/exams",
+    tags=["Exames"],
+    summary="Listar exames",
+    description="Lista os exames aplicando filtros de fila, decisao, mapeamento e busca por codigo.",
+    responses=AUTH_BAD_REQUEST_RESPONSES,
+)
 def list_exams(
     status_filter: Optional[str] = Query(default=None, alias="status"),
     category: Optional[str] = None,
@@ -902,7 +1008,13 @@ def list_exams(
     return results
 
 
-@app.get("/exams/{exam_id}")
+@app.get(
+    "/exams/{exam_id}",
+    tags=["Exames"],
+    summary="Consultar exame",
+    description="Retorna metadados, paciente, diagnosticos, regioes e rascunho do usuario autenticado.",
+    responses=AUTH_NOT_FOUND_RESPONSES,
+)
 def get_exam(
     exam_id: int,
     current_user: User = Depends(get_current_active_user),
@@ -912,7 +1024,13 @@ def get_exam(
     return _exam_payload(session, exam, include_details=True, current_user=current_user)
 
 
-@app.put("/exams/{exam_id}/draft")
+@app.put(
+    "/exams/{exam_id}/draft",
+    tags=["Exames"],
+    summary="Salvar rascunho do exame",
+    description="Cria, atualiza ou remove as observacoes em rascunho do usuario para o exame.",
+    responses=AUTH_NOT_FOUND_RESPONSES,
+)
 def save_exam_draft(
     exam_id: int,
     payload: ExamDraftUpdate,
@@ -943,7 +1061,18 @@ def save_exam_draft(
     return _exam_payload(session, exam, include_details=True, current_user=current_user)
 
 
-@app.get("/exams/{exam_id}/image", response_model=None)
+@app.get(
+    "/exams/{exam_id}/image",
+    tags=["Exames"],
+    summary="Obter imagem do ECG",
+    description="Entrega a imagem real armazenada nos metadados ou redireciona para a imagem alternativa.",
+    response_model=None,
+    responses={
+        **AUTH_NOT_FOUND_RESPONSES,
+        200: {"description": "Conteudo binario da imagem do ECG."},
+        307: {"description": "Redirecionamento para a imagem alternativa."},
+    },
+)
 def get_exam_image(
     exam_id: int,
     current_user: User = Depends(get_current_active_user),
@@ -960,12 +1089,24 @@ def get_exam_image(
     return RedirectResponse(url=exam.image_url or "/sample-ecg.svg")
 
 
-@app.get("/diagnosis-options")
+@app.get(
+    "/diagnosis-options",
+    tags=["Diagnosticos"],
+    summary="Listar diagnosticos padronizados",
+    description="Retorna as opcoes permitidas para diagnosticos adicionados pelo medico.",
+    responses=AUTH_RESPONSES,
+)
 def diagnosis_options(current_user: User = Depends(get_current_active_user)) -> list[str]:
     return load_diagnosis_options()
 
 
-@app.patch("/exams/{exam_id}/status")
+@app.patch(
+    "/exams/{exam_id}/status",
+    tags=["Exames"],
+    summary="Atualizar status do exame",
+    description="Atualiza o estado operacional do exame sem executar sua validacao final.",
+    responses=AUTH_MUTATION_RESPONSES,
+)
 def update_exam_status(
     exam_id: int,
     payload: StatusUpdate,
@@ -1000,7 +1141,14 @@ def update_exam_status(
     return _exam_payload(session, exam, include_details=True, current_user=current_user)
 
 
-@app.post("/exams/{exam_id}/diagnoses", status_code=status.HTTP_201_CREATED)
+@app.post(
+    "/exams/{exam_id}/diagnoses",
+    tags=["Diagnosticos"],
+    summary="Adicionar diagnostico medico",
+    description="Adiciona ao exame um diagnostico padronizado informado pelo medico.",
+    status_code=status.HTTP_201_CREATED,
+    responses=AUTH_MUTATION_RESPONSES,
+)
 def add_diagnosis(
     exam_id: int,
     payload: DiagnosisCreate,
@@ -1063,7 +1211,14 @@ def add_diagnosis(
     return _diagnosis_payload(diagnosis, session=session)
 
 
-@app.post("/diagnoses/{diagnosis_id}/regions", status_code=status.HTTP_201_CREATED)
+@app.post(
+    "/diagnoses/{diagnosis_id}/regions",
+    tags=["Diagnosticos"],
+    summary="Adicionar regiao ao diagnostico",
+    description="Vincula ao diagnostico uma area percentual selecionada sobre a imagem do ECG.",
+    status_code=status.HTTP_201_CREATED,
+    responses=AUTH_MUTATION_RESPONSES,
+)
 def create_diagnosis_region(
     diagnosis_id: int,
     payload: DiagnosisRegionPayload,
@@ -1097,7 +1252,13 @@ def create_diagnosis_region(
     return _diagnosis_payload(diagnosis, session=session)
 
 
-@app.patch("/diagnoses/{diagnosis_id}/regions/{region_id}")
+@app.patch(
+    "/diagnoses/{diagnosis_id}/regions/{region_id}",
+    tags=["Diagnosticos"],
+    summary="Atualizar regiao do diagnostico",
+    description="Altera as coordenadas percentuais de uma area ja vinculada ao diagnostico.",
+    responses=AUTH_MUTATION_RESPONSES,
+)
 def update_diagnosis_region(
     diagnosis_id: int,
     region_id: int,
@@ -1125,7 +1286,13 @@ def update_diagnosis_region(
     return _diagnosis_payload(diagnosis, session=session)
 
 
-@app.delete("/diagnoses/{diagnosis_id}/regions/{region_id}")
+@app.delete(
+    "/diagnoses/{diagnosis_id}/regions/{region_id}",
+    tags=["Diagnosticos"],
+    summary="Remover regiao do diagnostico",
+    description="Remove uma area, preservando a exigencia de mapeamento para diagnosticos confirmados.",
+    responses=AUTH_MUTATION_RESPONSES,
+)
 def delete_diagnosis_region(
     diagnosis_id: int,
     region_id: int,
@@ -1158,7 +1325,13 @@ def delete_diagnosis_region(
     return _diagnosis_payload(diagnosis, session=session)
 
 
-@app.patch("/exams/{exam_id}/diagnoses/{diagnosis_id}/review")
+@app.patch(
+    "/exams/{exam_id}/diagnoses/{diagnosis_id}/review",
+    tags=["Diagnosticos"],
+    summary="Revisar diagnostico original",
+    description="Confirma ou rejeita um diagnostico original vinculado ao exame informado.",
+    responses=AUTH_MUTATION_RESPONSES,
+)
 def review_diagnosis(
     exam_id: int,
     diagnosis_id: int,
@@ -1191,7 +1364,13 @@ def review_diagnosis(
     return _diagnosis_payload(diagnosis, session=session)
 
 
-@app.delete("/exams/{exam_id}/diagnoses/{diagnosis_id}")
+@app.delete(
+    "/exams/{exam_id}/diagnoses/{diagnosis_id}",
+    tags=["Diagnosticos"],
+    summary="Remover diagnostico medico",
+    description="Remove um diagnostico adicionado pelo medico; diagnosticos originais sao preservados.",
+    responses=AUTH_MUTATION_RESPONSES,
+)
 def remove_diagnosis(
     exam_id: int,
     diagnosis_id: int,
@@ -1222,7 +1401,13 @@ def remove_diagnosis(
     return {"deleted": diagnosis_id}
 
 
-@app.post("/exams/{exam_id}/validate")
+@app.post(
+    "/exams/{exam_id}/validate",
+    tags=["Exames"],
+    summary="Concluir validacao do exame",
+    description="Finaliza o exame, incorpora o rascunho do usuario e registra o resultado da revisao.",
+    responses=AUTH_MUTATION_RESPONSES,
+)
 def validate_exam(
     exam_id: int,
     payload: ExamValidate,
@@ -1263,7 +1448,13 @@ def validate_exam(
     return _exam_payload(session, exam, include_details=True, current_user=current_user)
 
 
-@app.get("/dashboard/stats")
+@app.get(
+    "/dashboard/stats",
+    tags=["Dashboard"],
+    summary="Consultar indicadores do dashboard",
+    description="Retorna contagens de fila, decisoes, mapeamentos e exames revisados no periodo.",
+    responses=AUTH_RESPONSES,
+)
 def dashboard_stats(
     current_user: User = Depends(get_current_active_user),
     session: Session = Depends(get_session),
@@ -1299,16 +1490,15 @@ def dashboard_stats(
     }
 
 
-# Mangum handler for AWS Lambda
-from mangum import Mangum
-
 # Initialize DB on first request (since lifespan is off)
 _db_initialized = False
+
 
 @app.middleware("http")
 async def init_db_middleware(request, call_next):
     global _db_initialized
-    if not _db_initialized:
+    request_path = request.url.path.rstrip("/") or "/"
+    if request_path not in PUBLIC_SYSTEM_PATHS and not _db_initialized:
         if should_reset_database_on_startup():
             reset_db_and_tables()
         else:
@@ -1316,5 +1506,6 @@ async def init_db_middleware(request, call_next):
         _db_initialized = True
     response = await call_next(request)
     return response
+
 
 handler = Mangum(app, lifespan="off")

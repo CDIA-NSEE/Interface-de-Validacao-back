@@ -3,10 +3,8 @@ from __future__ import annotations
 import os
 import time
 from datetime import datetime, timedelta, timezone
-from functools import lru_cache
 from typing import Optional
 
-import httpx
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -87,7 +85,6 @@ def get_or_create_user_from_token(session: Session, payload: dict) -> User:
 
     user = get_user_by_cognito_sub(session, sub)
     if not user:
-        username = payload.get("cognito:username") or sub
         user = User(
             username=sub,
             full_name=payload.get("name") or payload.get("cognito:username") or "Cognito User",

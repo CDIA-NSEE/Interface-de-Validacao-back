@@ -6,8 +6,35 @@ from sqlmodel import Session, SQLModel, create_engine
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./ecg_review.db")
+DEFAULT_POSTGRES_CONNECT_TIMEOUT_SECONDS = 5
+MAX_POSTGRES_CONNECT_TIMEOUT_SECONDS = 30
 
-connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+
+def database_connect_args(
+    database_url: str, configured_timeout: str | None
+) -> dict[str, int | bool]:
+    if database_url.startswith("sqlite"):
+        return {"check_same_thread": False}
+    if database_url.startswith(("postgresql://", "postgresql+psycopg2://")):
+        try:
+            timeout = (
+                int(configured_timeout)
+                if configured_timeout is not None
+                else DEFAULT_POSTGRES_CONNECT_TIMEOUT_SECONDS
+            )
+        except ValueError:
+            timeout = DEFAULT_POSTGRES_CONNECT_TIMEOUT_SECONDS
+        return {
+            "connect_timeout": min(
+                max(timeout, 1), MAX_POSTGRES_CONNECT_TIMEOUT_SECONDS
+            )
+        }
+    return {}
+
+
+connect_args = database_connect_args(
+    DATABASE_URL, os.getenv("DATABASE_CONNECT_TIMEOUT_SECONDS")
+)
 engine = create_engine(DATABASE_URL, connect_args=connect_args)
 
 
