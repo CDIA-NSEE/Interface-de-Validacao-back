@@ -1,0 +1,11 @@
+{
+  "enabled": false,
+  "suggestions": [
+    {
+      "exam_code": "*",
+      "standard_diagnoses": [
+        "Ritmo sinusal"
+      ]
+    }
+  ]
+}
