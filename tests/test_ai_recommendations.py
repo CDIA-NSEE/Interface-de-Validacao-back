@@ -134,6 +134,50 @@ class AiRecommendationsConfigTest(unittest.TestCase):
             )
         )
 
+    def test_wildcard_matches_only_sinus_rhythm_for_any_exam(self):
+        recommendations = {
+            "enabled": True,
+            "suggestions": [
+                {
+                    "exam_code": "*",
+                    "standard_diagnoses": ["Ritmo sinusal"],
+                }
+            ],
+        }
+
+        for exam_code in ("ECG-001", "ECG-002", "NEW-EXAM-999"):
+            with self.subTest(exam_code=exam_code):
+                self.assertTrue(ai_suggested(exam_code, "Ritmo sinusal", recommendations))
+
+        self.assertFalse(ai_suggested("ECG-001", "Bradicardia sinusal", recommendations))
+        self.assertFalse(ai_suggested("ECG-002", "Taquicardia sinusal", recommendations))
+
+    def test_versioned_config_is_disabled_by_default_and_works_when_enabled(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AI_MODE_ENABLED", None)
+            recommendations = load_ai_recommendations()
+
+        self.assertEqual(recommendations, {"enabled": False, "suggestions": []})
+
+        with patch.dict(os.environ, {"AI_MODE_ENABLED": "true"}):
+            recommendations = load_ai_recommendations()
+
+        self.assertEqual(
+            recommendations,
+            {
+                "enabled": True,
+                "suggestions": [
+                    {
+                        "exam_code": "*",
+                        "standard_diagnoses": ["Ritmo sinusal"],
+                    }
+                ],
+            },
+        )
+        self.assertTrue(ai_suggested("NEW-EXAM", "Ritmo sinusal", recommendations))
+        self.assertFalse(ai_suggested("NEW-EXAM", "Bradicardia sinusal", recommendations))
+        self.assertFalse(ai_suggested("NEW-EXAM", "Taquicardia sinusal", recommendations))
+
 
 class AiRecommendationsPayloadTest(unittest.TestCase):
     def setUp(self):
@@ -152,7 +196,7 @@ class AiRecommendationsPayloadTest(unittest.TestCase):
             "enabled": True,
             "suggestions": [
                 {
-                    "exam_code": "ECG-001",
+                    "exam_code": "*",
                     "standard_diagnoses": ["Sobrecarga atrial esquerda"],
                 }
             ],

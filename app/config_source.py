@@ -11,6 +11,7 @@ from typing import Any
 
 CONFIG_DIR = Path(__file__).resolve().parent / "config"
 GENERAL_REVIEW_STANDARD_TEXT = "__GENERAL_REVIEW__"
+ALL_EXAMS_CODE = "*"
 
 
 def _load_json(name: str, default: Any) -> Any:
@@ -195,7 +196,11 @@ def ai_suggested(
     for suggestion in recommendations.get("suggestions", []):
         if not isinstance(suggestion, dict):
             continue
-        if normalize_text(suggestion.get("exam_code")) != normalized_exam_code:
+        configured_exam_code = normalize_text(suggestion.get("exam_code"))
+        if (
+            configured_exam_code != ALL_EXAMS_CODE
+            and configured_exam_code != normalized_exam_code
+        ):
             continue
         standard_diagnoses = suggestion.get("standard_diagnoses", [])
         if not isinstance(standard_diagnoses, list):
