@@ -1,0 +1,17 @@
+{
+  "enabled": false,
+  "suggestions": [
+    {
+      "exam_code": "A03B5F",
+      "standard_diagnoses": [
+        "Ritmo sinusal"
+      ]
+    },
+    {
+      "exam_code": "AA1209",
+      "standard_diagnoses": [
+        "Bradicardia sinusal"
+      ]
+    }
+  ]
+}

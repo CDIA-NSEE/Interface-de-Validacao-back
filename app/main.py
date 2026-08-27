@@ -13,7 +13,9 @@ from sqlmodel import Session, select
 from app.auth import authenticate_user, create_access_token, get_current_active_user
 from app.config_source import (
     active_validation_context,
+    ai_suggested,
     email_domain_allowed,
+    load_ai_recommendations,
     load_support_contact,
     normalize_text,
     standardize_diagnosis,
@@ -285,8 +287,16 @@ def _diagnosis_payload(
     diagnosis: Diagnosis,
     session: Session | None = None,
     context: dict | None = None,
+    exam_code: str | None = None,
+    ai_recommendations: dict | None = None,
 ) -> dict:
     context = context or active_validation_context()
+    recommendations = (
+        ai_recommendations if ai_recommendations is not None else load_ai_recommendations()
+    )
+    if exam_code is None and session:
+        exam = session.get(Exam, diagnosis.exam_id)
+        exam_code = exam.exam_code if exam else None
     standard_text = standardize_diagnosis(diagnosis.name)
     is_grouped = not _same_standard_text(standard_text, diagnosis.name)
     regions = _diagnosis_region_payloads(session, diagnosis)
@@ -322,6 +332,7 @@ def _diagnosis_payload(
             and active_standard_diagnosis
             and _same_standard_text(standard_text, active_standard_diagnosis)
         ),
+        "ai_suggested": ai_suggested(exam_code, standard_text, recommendations),
         "is_abnormal": diagnosis.is_abnormal,
         "region_x": diagnosis.region_x,
         "region_y": diagnosis.region_y,
@@ -398,13 +409,20 @@ def _exam_payload(
         payload["draft_notes"] = draft.notes if draft else None
 
     if include_details:
+        ai_recommendations = load_ai_recommendations()
         diagnoses = session.exec(
             select(Diagnosis)
             .where(Diagnosis.exam_id == exam.id)
             .order_by(Diagnosis.created_at)
         ).all()
         payload["diagnoses"] = [
-            _diagnosis_payload(diagnosis, session=session, context=context)
+            _diagnosis_payload(
+                diagnosis,
+                session=session,
+                context=context,
+                exam_code=exam.exam_code,
+                ai_recommendations=ai_recommendations,
+            )
             for diagnosis in diagnoses
         ]
 
@@ -448,8 +466,10 @@ def _validate_status(status_validation: str) -> None:
 
 def _context_payload() -> dict:
     context = active_validation_context()
+    ai_recommendations = load_ai_recommendations()
     return {
         **context,
+        "ai_mode_enabled": ai_recommendations["enabled"],
         "support_contact": load_support_contact(),
     }
 
@@ -1092,7 +1112,7 @@ def add_diagnosis(
 
     session.commit()
     session.refresh(diagnosis)
-    return _diagnosis_payload(diagnosis, session=session)
+    return _diagnosis_payload(diagnosis, session=session, exam_code=exam.exam_code)
 
 
 @app.post("/diagnoses/{diagnosis_id}/regions", status_code=status.HTTP_201_CREATED)
@@ -1126,7 +1146,7 @@ def create_diagnosis_region(
     session.add(exam)
     session.commit()
     session.refresh(diagnosis)
-    return _diagnosis_payload(diagnosis, session=session)
+    return _diagnosis_payload(diagnosis, session=session, exam_code=exam.exam_code)
 
 
 @app.patch("/diagnoses/{diagnosis_id}/regions/{region_id}")
@@ -1154,7 +1174,7 @@ def update_diagnosis_region(
     session.add(exam)
     session.commit()
     session.refresh(diagnosis)
-    return _diagnosis_payload(diagnosis, session=session)
+    return _diagnosis_payload(diagnosis, session=session, exam_code=exam.exam_code)
 
 
 @app.delete("/diagnoses/{diagnosis_id}/regions/{region_id}")
@@ -1187,7 +1207,7 @@ def delete_diagnosis_region(
     session.add(exam)
     session.commit()
     session.refresh(diagnosis)
-    return _diagnosis_payload(diagnosis, session=session)
+    return _diagnosis_payload(diagnosis, session=session, exam_code=exam.exam_code)
 
 
 @app.patch("/exams/{exam_id}/diagnoses/{diagnosis_id}/review")
@@ -1220,7 +1240,7 @@ def review_diagnosis(
     session.add(exam)
     session.commit()
     session.refresh(diagnosis)
-    return _diagnosis_payload(diagnosis, session=session)
+    return _diagnosis_payload(diagnosis, session=session, exam_code=exam.exam_code)
 
 
 @app.delete("/exams/{exam_id}/diagnoses/{diagnosis_id}")

@@ -107,6 +107,109 @@ def standardize_diagnosis(original_text: str | None) -> str:
     return str(original_text or "").strip()
 
 
+def _parse_boolean_override(value: str) -> bool | None:
+    normalized_value = value.strip().lower()
+    if normalized_value in {"1", "true", "yes", "on"}:
+        return True
+    if normalized_value in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def load_ai_recommendations() -> dict:
+    disabled_config = {"enabled": False, "suggestions": []}
+    try:
+        data = _load_json("ai_recommendations.json", None)
+    except (OSError, ValueError, TypeError):
+        return disabled_config
+
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("enabled"), bool)
+        or not isinstance(data.get("suggestions"), list)
+    ):
+        return disabled_config
+
+    enabled = data["enabled"]
+    env_override = os.getenv("AI_MODE_ENABLED")
+    if env_override is not None:
+        parsed_override = _parse_boolean_override(env_override)
+        if parsed_override is None:
+            return disabled_config
+        enabled = parsed_override
+
+    if not enabled:
+        return disabled_config
+
+    suggestions = []
+    for entry in data["suggestions"]:
+        if not isinstance(entry, dict):
+            continue
+
+        raw_exam_code = entry.get("exam_code")
+        diagnosis_values = entry.get("standard_diagnoses")
+        if not isinstance(raw_exam_code, str) or not isinstance(diagnosis_values, list):
+            continue
+        exam_code = raw_exam_code.strip()
+        if not exam_code:
+            continue
+
+        standard_diagnoses = []
+        normalized_diagnoses = set()
+        for diagnosis in diagnosis_values:
+            if not isinstance(diagnosis, str):
+                continue
+            standard_text = standardize_diagnosis(diagnosis.strip())
+            normalized_standard_text = normalize_text(standard_text)
+            if not normalized_standard_text or normalized_standard_text in normalized_diagnoses:
+                continue
+            normalized_diagnoses.add(normalized_standard_text)
+            standard_diagnoses.append(standard_text)
+
+        if standard_diagnoses:
+            suggestions.append(
+                {
+                    "exam_code": exam_code,
+                    "standard_diagnoses": standard_diagnoses,
+                }
+            )
+
+    return {"enabled": enabled, "suggestions": suggestions}
+
+
+def ai_suggested(
+    exam_code: str | None,
+    diagnosis_text: str | None,
+    recommendations: dict | None = None,
+) -> bool:
+    if recommendations is None:
+        recommendations = load_ai_recommendations()
+    if not recommendations.get("enabled"):
+        return False
+
+    normalized_exam_code = normalize_text(exam_code)
+    normalized_diagnosis = normalize_text(standardize_diagnosis(diagnosis_text))
+    if not normalized_exam_code or not normalized_diagnosis:
+        return False
+
+    for suggestion in recommendations.get("suggestions", []):
+        if not isinstance(suggestion, dict):
+            continue
+        if normalize_text(suggestion.get("exam_code")) != normalized_exam_code:
+            continue
+        standard_diagnoses = suggestion.get("standard_diagnoses", [])
+        if not isinstance(standard_diagnoses, list):
+            continue
+        if any(
+            normalize_text(item) == normalized_diagnosis
+            for item in standard_diagnoses
+            if isinstance(item, str)
+        ):
+            return True
+
+    return False
+
+
 def _parse_date(value: str | None) -> date | None:
     if not value:
         return None

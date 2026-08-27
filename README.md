@@ -19,8 +19,29 @@ Variaveis principais:
 - `DEFAULT_USER_*` e `DEFAULT_ADMIN_*`: usuarios criados pela seed inicial quando configurados.
 - `BP_ALLOWED_EMAIL_DOMAINS`: lista CSV de dominios aceitos para usuarios nao administradores.
 - `METADATA_DATABASE_PATH`: caminho opcional para o SQLite externo de metadados extraidos dos ECGs. Caminhos relativos sao resolvidos a partir da raiz do back.
+- `AI_MODE_ENABLED`: override operacional opcional do modo IA informativo. Aceita `true`/`false`, `1`/`0`, `yes`/`no` ou `on`/`off`.
 - `BACKEND_CORS_ORIGINS`: lista CSV de origens permitidas para o front.
 - `BACKEND_CORS_ORIGIN_REGEX`: regex opcional para origens permitidas.
+
+## Modo IA informativo
+
+As recomendacoes simuladas sao versionadas em `app/config/ai_recommendations.json` e ficam desabilitadas por padrao. Cada entrada associa um `exam_code` a diagnosticos padronizados que ja devem existir no exame:
+
+```json
+{
+  "enabled": false,
+  "suggestions": [
+    {
+      "exam_code": "A03B5F",
+      "standard_diagnoses": ["Ritmo sinusal"]
+    }
+  ]
+}
+```
+
+Quando habilitado no arquivo ou por `AI_MODE_ENABLED=true`, `GET /validation/context` informa `ai_mode_enabled` e os payloads de diagnostico informam `ai_suggested`. O pareamento usa o codigo do exame e a mesma padronizacao canonica aplicada pela validacao.
+
+A IA e somente informativa: ela nao cria diagnosticos, nao persiste inferencias e nao altera as decisoes medicas de concordancia ou discordancia. Arquivo ausente, formato invalido ou override desconhecido desabilitam o modo com seguranca. O rollout recomendado e publicar este backend antes do frontend, que trata campos ausentes como `false`.
 
 ## Dados externos
 
