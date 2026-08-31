@@ -154,6 +154,12 @@ def _diagnosis_regions(session: Session, diagnosis: Diagnosis) -> list[Diagnosis
     ).all()
 
 
+def _delete_diagnosis_with_regions(session: Session, diagnosis: Diagnosis) -> None:
+    for region in _diagnosis_regions(session, diagnosis):
+        session.delete(region)
+    session.delete(diagnosis)
+
+
 def _legacy_region_payload(diagnosis: Diagnosis) -> dict | None:
     if diagnosis.region_width and diagnosis.region_height:
         return {
@@ -1264,7 +1270,7 @@ def remove_diagnosis(
             detail="O diagnóstico original do ECG não pode ser removido.",
         )
 
-    session.delete(diagnosis)
+    _delete_diagnosis_with_regions(session, diagnosis)
 
     exam = _get_exam_or_404(session, exam_id)
     exam.updated_at = datetime.utcnow()
