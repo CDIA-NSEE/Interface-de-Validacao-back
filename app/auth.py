@@ -1,4 +1,3 @@
-import os
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -8,13 +7,14 @@ from jwt.exceptions import InvalidTokenError
 from pwdlib import PasswordHash
 from sqlmodel import Session, select
 
+from app.core.settings import get_settings
 from app.database import get_session
 from app.models import User
 
-
-SECRET_KEY = os.getenv("AUTH_SECRET_KEY", "dev-only-change-this-secret-key")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "480"))
+_auth_settings = get_settings().auth
+SECRET_KEY = _auth_settings.secret_key
+ALGORITHM = _auth_settings.algorithm
+ACCESS_TOKEN_EXPIRE_MINUTES = _auth_settings.access_token_expire_minutes
 
 password_hash = PasswordHash.recommended()
 DUMMY_HASH = password_hash.hash("dummy-password")

@@ -1,10 +1,10 @@
-from datetime import datetime, timedelta
-import os
+from datetime import datetime, timedelta, timezone
 
 from sqlmodel import Session, select
 
 from app.auth import get_password_hash
 from app.config_source import load_validation_calendar
+from app.core.settings import get_settings
 from app.metadata_source import conclusion_items, load_metadata_records
 from app.models import (
     Diagnosis,
@@ -37,15 +37,16 @@ SIMULATED_EXAM_CODES = {
 }
 
 DEFAULT_DATABASE_URL = "sqlite:///./ecg_review.db"
-DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
-DEFAULT_USER_USERNAME = os.getenv("DEFAULT_USER_USERNAME", "dr.joao").strip().lower()
-DEFAULT_USER_FULL_NAME = os.getenv("DEFAULT_USER_FULL_NAME", "Dr. João").strip()
-DEFAULT_USER_PASSWORD = os.getenv("DEFAULT_USER_PASSWORD")
+_auth_settings = get_settings().auth
+DATABASE_URL = get_settings().database.url
+DEFAULT_USER_USERNAME = _auth_settings.default_user_username.strip().lower()
+DEFAULT_USER_FULL_NAME = _auth_settings.default_user_full_name.strip()
+DEFAULT_USER_PASSWORD = _auth_settings.default_user_password
 if DEFAULT_USER_PASSWORD is None and DATABASE_URL == DEFAULT_DATABASE_URL:
     DEFAULT_USER_PASSWORD = "medpage123"
-DEFAULT_ADMIN_USERNAME = os.getenv("DEFAULT_ADMIN_USERNAME", "admin").strip().lower()
-DEFAULT_ADMIN_FULL_NAME = os.getenv("DEFAULT_ADMIN_FULL_NAME", "Administrador Operacional").strip()
-DEFAULT_ADMIN_PASSWORD = os.getenv("DEFAULT_ADMIN_PASSWORD")
+DEFAULT_ADMIN_USERNAME = _auth_settings.default_admin_username.strip().lower()
+DEFAULT_ADMIN_FULL_NAME = _auth_settings.default_admin_full_name.strip()
+DEFAULT_ADMIN_PASSWORD = _auth_settings.default_admin_password
 if DEFAULT_ADMIN_PASSWORD is None and DATABASE_URL == DEFAULT_DATABASE_URL:
     DEFAULT_ADMIN_PASSWORD = "admin123"
 
@@ -59,7 +60,7 @@ def _bmi(weight: float, height: float) -> float:
 
 
 def _parse_date(value: str) -> datetime:
-    return datetime.strptime(value, "%d/%m/%Y")
+    return datetime.strptime(value, "%d/%m/%Y").replace(tzinfo=timezone.utc)
 
 
 def _is_abnormal(diagnosis: str) -> bool:
@@ -285,7 +286,7 @@ def seed_database(session: Session) -> None:
         _normalize_simulated_metadata(session)
         return
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     rows = [
         {

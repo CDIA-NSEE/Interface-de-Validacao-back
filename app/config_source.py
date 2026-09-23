@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import unicodedata
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from app.core.settings import get_settings
 
 CONFIG_DIR = Path(__file__).resolve().parent / "config"
 GENERAL_REVIEW_STANDARD_TEXT = "__GENERAL_REVIEW__"
@@ -50,7 +50,7 @@ def load_auth_config() -> dict:
 
 
 def allowed_email_domains() -> list[str]:
-    env_domains = os.getenv("BP_ALLOWED_EMAIL_DOMAINS")
+    env_domains = get_settings().auth.allowed_email_domains
     if env_domains is not None:
         return _split_csv(env_domains)
     return load_auth_config()["allowed_email_domains"]
@@ -132,7 +132,7 @@ def load_ai_recommendations() -> dict:
         return disabled_config
 
     enabled = data["enabled"]
-    env_override = os.getenv("AI_MODE_ENABLED")
+    env_override = get_settings().validation.ai_mode_enabled
     if env_override is not None:
         parsed_override = _parse_boolean_override(env_override)
         if parsed_override is None:
@@ -257,7 +257,8 @@ def active_validation_context(today: date | None = None) -> dict:
     today = today or date.today()
     calendar = load_validation_calendar()
     general_review_day = calendar["general_review_day"]
-    day_index = _coerce_int(os.getenv("VALIDATION_CYCLE_DAY"))
+    validation_settings = get_settings().validation
+    day_index = _coerce_int(validation_settings.cycle_day)
 
     if day_index is None:
         day_index = _coerce_int(calendar.get("active_day_index"))
@@ -267,7 +268,7 @@ def active_validation_context(today: date | None = None) -> dict:
         if start_date:
             day_index = ((today - start_date).days % general_review_day) + 1
 
-    env_diagnosis = os.getenv("VALIDATION_ACTIVE_DIAGNOSIS")
+    env_diagnosis = validation_settings.active_diagnosis
     active_standard_diagnosis = env_diagnosis.strip() if env_diagnosis else None
 
     if day_index is not None and not active_standard_diagnosis:
@@ -300,13 +301,14 @@ def load_support_contact() -> dict:
         },
     )
 
-    env_label = os.getenv("SUPPORT_CONTACT_LABEL")
-    env_value = os.getenv("SUPPORT_CONTACT_VALUE")
+    support_settings = get_settings().support
+    env_label = support_settings.label
+    env_value = support_settings.value
     if env_label and env_value:
         data["channels"] = [
             {
                 "label": env_label.strip(),
-                "type": os.getenv("SUPPORT_CONTACT_TYPE", "text").strip() or "text",
+                "type": (support_settings.type or "text").strip() or "text",
                 "value": env_value.strip(),
             }
         ]

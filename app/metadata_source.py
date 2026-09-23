@@ -1,4 +1,3 @@
-import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -7,6 +6,7 @@ from sqlalchemy import create_engine, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.config_source import load_diagnosis_groupings, normalize_text, standardize_diagnosis
+from app.core.settings import get_settings
 from app.metadata_models import METADATA_PAYLOAD_FIELDS, MetadataRecord
 
 try:
@@ -21,7 +21,7 @@ LEGACY_METADATA_PATH = BACKEND_ROOT.parent / "data" / "database" / "metadata.db"
 
 
 def metadata_database_path() -> Path:
-    configured_path = os.getenv("METADATA_DATABASE_PATH")
+    configured_path = get_settings().metadata.database_path
     if configured_path:
         path = Path(configured_path)
         return path if path.is_absolute() else BACKEND_ROOT / path

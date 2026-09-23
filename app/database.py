@@ -1,14 +1,14 @@
-import os
 from typing import Generator
 
 from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine
 
+from app.core.settings import get_settings
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./ecg_review.db")
+_settings = get_settings()
+DATABASE_URL = _settings.database.url
 
-connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-engine = create_engine(DATABASE_URL, connect_args=connect_args)
+engine = create_engine(DATABASE_URL, connect_args=_settings.database.connect_args)
 
 
 def create_db_and_tables() -> None:
@@ -23,10 +23,7 @@ def reset_db_and_tables() -> None:
 
 
 def should_reset_database_on_startup() -> bool:
-    configured_value = os.getenv("RESET_DATABASE_ON_STARTUP")
-    if configured_value is None:
-        return False
-    return configured_value.lower() in {"1", "true", "yes", "sim", "on"}
+    return get_settings().database.reset_on_startup
 
 
 def _migrate_columns() -> None:

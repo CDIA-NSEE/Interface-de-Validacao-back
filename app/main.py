@@ -1,6 +1,5 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
-import os
+from datetime import datetime, timedelta, timezone
 import re
 from typing import Optional
 
@@ -11,6 +10,8 @@ from sqlalchemy import desc
 from sqlmodel import Session, select
 
 from app.auth import authenticate_user, create_access_token, get_current_active_user
+from app.core.settings import get_settings
+from app.logging import configure_logging
 from app.config_source import (
     active_validation_context,
     ai_suggested,
@@ -66,14 +67,14 @@ def _split_csv_env(value: str | None) -> list[str]:
 
 
 def _cors_origins() -> list[str]:
-    configured_origins = os.getenv("BACKEND_CORS_ORIGINS")
+    configured_origins = get_settings().cors.origins
     if configured_origins is None:
         return DEFAULT_CORS_ORIGINS
     return _split_csv_env(configured_origins)
 
 
 def _cors_origin_regex() -> str | None:
-    configured_regex = os.getenv("BACKEND_CORS_ORIGIN_REGEX")
+    configured_regex = get_settings().cors.origin_regex
     if configured_regex is None:
         return DEFAULT_CORS_ORIGIN_REGEX
     return configured_regex.strip() or None
@@ -81,6 +82,7 @@ def _cors_origin_regex() -> str | None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_logging(get_settings())
     if should_reset_database_on_startup():
         reset_db_and_tables()
     else:
@@ -814,7 +816,7 @@ def review_validation_diagnosis(
     if payload.review_status == "confirmed":
         _ensure_region_before_confirm(session, diagnosis)
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     validation = _latest_standard_validation(
         session,
         exam.id,
@@ -985,7 +987,7 @@ def save_exam_draft(
         session.delete(draft)
     elif draft:
         draft.notes = notes
-        draft.updated_at = datetime.utcnow()
+        draft.updated_at = datetime.now(timezone.utc)
         session.add(draft)
     elif notes is not None:
         session.add(
@@ -1041,7 +1043,7 @@ def update_exam_status(
     status_before = exam.status_validation
     exam.status_validation = payload.status_validation
     exam.review_result = None
-    exam.updated_at = datetime.utcnow()
+    exam.updated_at = datetime.now(timezone.utc)
     session.add(exam)
     if status_before != payload.status_validation:
         session.add(
@@ -1113,7 +1115,7 @@ def add_diagnosis(
         _sync_legacy_region_fields(session, diagnosis)
 
     exam = _get_exam_or_404(session, exam_id)
-    exam.updated_at = datetime.utcnow()
+    exam.updated_at = datetime.now(timezone.utc)
     session.add(exam)
 
     session.commit()
@@ -1147,7 +1149,7 @@ def create_diagnosis_region(
 
     _sync_legacy_region_fields(session, diagnosis)
     exam = _get_exam_or_404(session, diagnosis.exam_id)
-    exam.updated_at = datetime.utcnow()
+    exam.updated_at = datetime.now(timezone.utc)
     session.add(diagnosis)
     session.add(exam)
     session.commit()
@@ -1170,12 +1172,12 @@ def update_diagnosis_region(
     region.y = payload.y
     region.width = payload.width
     region.height = payload.height
-    region.updated_at = datetime.utcnow()
+    region.updated_at = datetime.now(timezone.utc)
     session.add(region)
     _sync_legacy_region_fields(session, diagnosis)
 
     exam = _get_exam_or_404(session, diagnosis.exam_id)
-    exam.updated_at = datetime.utcnow()
+    exam.updated_at = datetime.now(timezone.utc)
     session.add(diagnosis)
     session.add(exam)
     session.commit()
@@ -1208,7 +1210,7 @@ def delete_diagnosis_region(
     session.flush()
     _sync_legacy_region_fields(session, diagnosis)
     exam = _get_exam_or_404(session, diagnosis.exam_id)
-    exam.updated_at = datetime.utcnow()
+    exam.updated_at = datetime.now(timezone.utc)
     session.add(diagnosis)
     session.add(exam)
     session.commit()
@@ -1241,7 +1243,7 @@ def review_diagnosis(
         _ensure_region_before_confirm(session, diagnosis)
 
     diagnosis.review_status = payload.review_status
-    exam.updated_at = datetime.utcnow()
+    exam.updated_at = datetime.now(timezone.utc)
     session.add(diagnosis)
     session.add(exam)
     session.commit()
@@ -1273,7 +1275,7 @@ def remove_diagnosis(
     _delete_diagnosis_with_regions(session, diagnosis)
 
     exam = _get_exam_or_404(session, exam_id)
-    exam.updated_at = datetime.utcnow()
+    exam.updated_at = datetime.now(timezone.utc)
     session.add(exam)
 
     session.commit()
@@ -1296,7 +1298,7 @@ def validate_exam(
     exam = _get_exam_or_404(session, exam_id)
     draft = _exam_draft_for_user(session, exam.id, current_user.id)
     status_before = exam.status_validation
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     review_notes = payload.notes if payload.notes is not None else (draft.notes if draft else None)
 
     exam.status_validation = "valido"
@@ -1329,7 +1331,7 @@ def dashboard_stats(
     exams = session.exec(select(Exam)).all()
     reviews = session.exec(select(Review).where(Review.status_after == "valido")).all()
     context = active_validation_context()
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = now - timedelta(days=7)
     queue_state_counts = _queue_state_counts(session, exams, context)

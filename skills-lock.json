@@ -1,0 +1,215 @@
+{
+  "version": 1,
+  "skills": {
+    "architecture-diagram-creator": {
+      "source": "mhattingpete/claude-skills-marketplace",
+      "sourceType": "github",
+      "skillPath": "visual-documentation-plugin/skills/architecture-diagram-creator/SKILL.md",
+      "computedHash": "89f22b4e6e485cea0178b11e3d7ff4feabdd489141429a40c4d6fc768bb828e7"
+    },
+    "auditing-python-security": {
+      "source": "wdm0006/python-skills",
+      "sourceType": "github",
+      "skillPath": "skills/python/security-audit/SKILL.md",
+      "computedHash": "4ee1922fb4ef7b8a42bb8967578684f1623d1f0f575b582da64ea0d3ffbb9d5a"
+    },
+    "brazil-lgpd": {
+      "source": "mukul975/Privacy-Data-Protection-Skills",
+      "sourceType": "github",
+      "skillPath": "skills/privacy/brazil-lgpd/SKILL.md",
+      "computedHash": "d7146326c93fbcab84e72c3dd05f7872d64ab20c20f716007b6818d6f640c469"
+    },
+    "building-python-web-apps": {
+      "source": "wdm0006/python-skills",
+      "sourceType": "github",
+      "skillPath": "skills/python/web-app-architecture/SKILL.md",
+      "computedHash": "c4609b445ab3010dbde96f925fc798833254171e6b128ede6767d7040a0a7c03"
+    },
+    "code-auditor": {
+      "source": "mhattingpete/claude-skills-marketplace",
+      "sourceType": "github",
+      "skillPath": "productivity-skills-plugin/skills/code-auditor/SKILL.md",
+      "computedHash": "1a5326298297ba93266913c2eb5cd3e351e1bcbb14d75e2c57cd2f925bfd89c2"
+    },
+    "codebase-documenter": {
+      "source": "mhattingpete/claude-skills-marketplace",
+      "sourceType": "github",
+      "skillPath": "productivity-skills-plugin/skills/codebase-documenter/SKILL.md",
+      "computedHash": "7053da39fbc9139acc2a618507699b45ec1d4f245806a12d3e2e7608a51f9338"
+    },
+    "designing-python-apis": {
+      "source": "wdm0006/python-skills",
+      "sourceType": "github",
+      "skillPath": "skills/python/api-design/SKILL.md",
+      "computedHash": "ba16433de42a6b2d7476a8983c8d14a64568d6460d825a4923fa6817248480fb"
+    },
+    "docker": {
+      "source": "wrsmith108/docker-claude-skill",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "fa8c9d74118638ddc4ade999da5f4cc216adadae6017020ecaab839bd634a55a"
+    },
+    "documenting-python-libraries": {
+      "source": "wdm0006/python-skills",
+      "sourceType": "github",
+      "skillPath": "skills/python/documentation/SKILL.md",
+      "computedHash": "af1ec635c9fe2b5dfeb04b46d260e3dadc630b7f587e12e711c54492368566de"
+    },
+    "generate-swagger-docs": {
+      "source": "qodex-ai/ai-agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/generate-swagger-docs/SKILL.md",
+      "computedHash": "7d2bc1cb4c97d4fc8bce461bf0cf93e4f69dd40fc18c845cbce3de16d1ccc0f3"
+    },
+    "git-pushing": {
+      "source": "mhattingpete/claude-skills-marketplace",
+      "sourceType": "github",
+      "skillPath": "engineering-workflow-plugin/skills/git-pushing/SKILL.md",
+      "computedHash": "de81aaaaf947adc0f3aa8af58384898c8214d431fa1546fab7b1304908290e5d"
+    },
+    "guarding-destructive-operations": {
+      "source": "wdm0006/python-skills",
+      "sourceType": "github",
+      "skillPath": "skills/common/destructive-operations/SKILL.md",
+      "computedHash": "0e69142da45ef35cdfb61c11b9ad2d9cc6625bc79b60e9c4f69535e43c81bc52"
+    },
+    "improving-python-code-quality": {
+      "source": "wdm0006/python-skills",
+      "sourceType": "github",
+      "skillPath": "skills/python/code-quality/SKILL.md",
+      "computedHash": "ffd665a6fb5351d4d451a2d0e3976f85da827deac43177224ff0cb9410e9a36b"
+    },
+    "keeping-git-repos-clean": {
+      "source": "wdm0006/python-skills",
+      "sourceType": "github",
+      "skillPath": "skills/common/git-hygiene/SKILL.md",
+      "computedHash": "ff80fdb5304a4059498f61fa0590eba76e6f1a06f49880f6d9788b532a2ba734"
+    },
+    "openspec-apply": {
+      "source": "chyiiiiiiiiiiii/openspec-skills",
+      "sourceType": "github",
+      "skillPath": "openspec-apply/SKILL.md",
+      "computedHash": "ba9e020fc35429d00b40518fb4f3dc885521f71de8977727856c57893f79520c"
+    },
+    "openspec-archive": {
+      "source": "chyiiiiiiiiiiii/openspec-skills",
+      "sourceType": "github",
+      "skillPath": "openspec-archive/SKILL.md",
+      "computedHash": "4d3193485019873c8e24abcbc326dfe4a4600e80cc1097e12383caabfae1e201"
+    },
+    "openspec-proposal": {
+      "source": "chyiiiiiiiiiiii/openspec-skills",
+      "sourceType": "github",
+      "skillPath": "openspec-proposal/SKILL.md",
+      "computedHash": "0aeb1c15ae1e2e3ab2e31e4bf432b1512cc25db3b143cec0f90a8f86fc7fa5fc"
+    },
+    "optimizing-python-performance": {
+      "source": "wdm0006/python-skills",
+      "sourceType": "github",
+      "skillPath": "skills/python/performance/SKILL.md",
+      "computedHash": "35ebd9fc0b5217aa1e64f3679cbf81637911ddc2d450d4f864086285a6e0e096"
+    },
+    "owasp-security": {
+      "source": "agamm/claude-code-owasp",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/owasp-security/SKILL.md",
+      "computedHash": "3441937e14d1be92267310c4b6b17db2ecc04a6d7f60ded24abc122bfb4ae04c"
+    },
+    "ponytail": {
+      "source": "DietrichGebert/ponytail",
+      "sourceType": "github",
+      "skillPath": "skills/ponytail/SKILL.md",
+      "computedHash": "210fa0831f649ce9f8a305f7b7c8cf2a0dd09ac4dd53067109941b96e7811d4e"
+    },
+    "ponytail-audit": {
+      "source": "DietrichGebert/ponytail",
+      "sourceType": "github",
+      "skillPath": "skills/ponytail-audit/SKILL.md",
+      "computedHash": "8b8d72e6ff70b65b6c9518d470fcf29dc696eea93d28f3efa10fdcc60cbd696d"
+    },
+    "ponytail-debt": {
+      "source": "DietrichGebert/ponytail",
+      "sourceType": "github",
+      "skillPath": "skills/ponytail-debt/SKILL.md",
+      "computedHash": "0099b82174e3a4261828b4ec04d2c068b1b294fdab14f76701c2acd1f7c99539"
+    },
+    "ponytail-gain": {
+      "source": "DietrichGebert/ponytail",
+      "sourceType": "github",
+      "skillPath": "skills/ponytail-gain/SKILL.md",
+      "computedHash": "c45ecba7906960eea904218b623abf097ebff84ecbacca6d68da1d0687435f75"
+    },
+    "ponytail-help": {
+      "source": "DietrichGebert/ponytail",
+      "sourceType": "github",
+      "skillPath": "skills/ponytail-help/SKILL.md",
+      "computedHash": "10e8382b1033c9a0fec0073de6d3de3846b4f5dca7d78b6df2d476a1f4cd43c6"
+    },
+    "ponytail-review": {
+      "source": "DietrichGebert/ponytail",
+      "sourceType": "github",
+      "skillPath": "skills/ponytail-review/SKILL.md",
+      "computedHash": "4646594fcd75455533f7ff1425f4f1c5ba0fa65f88241bf262b1c4fc275f049a"
+    },
+    "pytest": {
+      "source": "Gentleman-Programming/Gentleman-Skills",
+      "sourceType": "github",
+      "skillPath": "curated/pytest/SKILL.md",
+      "computedHash": "8bf87b55ecc72cd9790eb985ba0d8e804d0c0a9be58b2ae02c963bbb6b5abc56"
+    },
+    "review-implementing": {
+      "source": "mhattingpete/claude-skills-marketplace",
+      "sourceType": "github",
+      "skillPath": "engineering-workflow-plugin/skills/review-implementing/SKILL.md",
+      "computedHash": "670712b98ab7d405eca65e9cdaab859dcec16388049ea0b47ebcbafcd6972052"
+    },
+    "reviewing-python-libraries": {
+      "source": "wdm0006/python-skills",
+      "sourceType": "github",
+      "skillPath": "skills/python/library-review/SKILL.md",
+      "computedHash": "8640e4c2f6766cd8277289747b41f6b8bad7e3d627266b456b31b64d1bcda407"
+    },
+    "running-github-actions-efficiently": {
+      "source": "wdm0006/python-skills",
+      "sourceType": "github",
+      "skillPath": "skills/common/github-actions/SKILL.md",
+      "computedHash": "a837948cac5c759b2f5fe8e73d2f049a0c23dc37e83630804ad158840b85f5d0"
+    },
+    "setting-up-python-libraries": {
+      "source": "wdm0006/python-skills",
+      "sourceType": "github",
+      "skillPath": "skills/python/project-setup/SKILL.md",
+      "computedHash": "004d97b94ee1e4eb4e4755d8f8b57b48f1a5ad69d5e54574b4eb50338f39b2d8"
+    },
+    "technical-doc-creator": {
+      "source": "mhattingpete/claude-skills-marketplace",
+      "sourceType": "github",
+      "skillPath": "visual-documentation-plugin/skills/technical-doc-creator/SKILL.md",
+      "computedHash": "903bbf56af9901edfeec2a28059cf4b90074235a055297e0fb679ec8bcfad1de"
+    },
+    "test-fixing": {
+      "source": "mhattingpete/claude-skills-marketplace",
+      "sourceType": "github",
+      "skillPath": "engineering-workflow-plugin/skills/test-fixing/SKILL.md",
+      "computedHash": "293379b8a806c80429d320f801db00bdda64924f0771e9ef05d52d015526e043"
+    },
+    "testing-python-libraries": {
+      "source": "wdm0006/python-skills",
+      "sourceType": "github",
+      "skillPath": "skills/python/testing-strategy/SKILL.md",
+      "computedHash": "36eb616d9edc99a7b056e179d2e97357d22e7adfc6af8b73d134f5fc860c4986"
+    },
+    "verifying-external-behavior": {
+      "source": "wdm0006/python-skills",
+      "sourceType": "github",
+      "skillPath": "skills/common/verifying-external-behavior/SKILL.md",
+      "computedHash": "d3828951997f8be92ef608e60b991f914faa8fca2f7c2277842f6a88326c0911"
+    },
+    "wiring-application-config": {
+      "source": "wdm0006/python-skills",
+      "sourceType": "github",
+      "skillPath": "skills/common/app-config/SKILL.md",
+      "computedHash": "2c10a460b98f33b67e18bd71a81a56a31cf3a5f2a7c5657136b2621c76665de2"
+    }
+  }
+}
