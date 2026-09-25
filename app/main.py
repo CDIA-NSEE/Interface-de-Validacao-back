@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import os
 import re
 from typing import Optional
@@ -107,11 +107,29 @@ app.add_middleware(
 )
 
 
-def _patient_payload(patient: Patient) -> dict:
+def _parse_birth_date(value: str | None) -> date | None:
+    for date_format in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime((value or "").strip(), date_format).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _age_at(birth_date: str | None, reference_date: date | None) -> int | None:
+    """Idade em anos completos na data do exame, usada quando a origem não traz a idade."""
+    birth = _parse_birth_date(birth_date)
+    if birth is None or reference_date is None:
+        return None
+    age = reference_date.year - birth.year - ((reference_date.month, reference_date.day) < (birth.month, birth.day))
+    return age if 0 < age < 150 else None
+
+
+def _patient_payload(patient: Patient, exam_date: date | None = None) -> dict:
     return {
         "id": patient.id,
         "birth_date": patient.birth_date,
-        "age": patient.age or None,
+        "age": patient.age or _age_at(patient.birth_date, exam_date),
         "sex": patient.sex or None,
         "weight": patient.weight or None,
         "height": patient.height or None,
@@ -406,7 +424,7 @@ def _exam_payload(
         "updated_at": exam.updated_at,
         "started_at": started_at,
         "completed_at": completed_at,
-        "patient": _patient_payload(patient),
+        "patient": _patient_payload(patient, exam.exam_date),
         "validation_context": context,
     }
 
