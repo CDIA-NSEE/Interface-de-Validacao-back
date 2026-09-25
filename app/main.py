@@ -126,10 +126,13 @@ def _age_at(birth_date: str | None, reference_date: date | None) -> int | None:
 
 
 def _patient_payload(patient: Patient, exam_date: date | None = None) -> dict:
+    # age_calculated: a idade não veio da origem e foi calculada aqui — a tela avisa, porque as duas podem divergir.
+    calculated_age = None if patient.age else _age_at(patient.birth_date, exam_date)
     return {
         "id": patient.id,
         "birth_date": patient.birth_date,
-        "age": patient.age or _age_at(patient.birth_date, exam_date),
+        "age": patient.age or calculated_age,
+        "age_calculated": calculated_age is not None,
         "sex": patient.sex or None,
         "weight": patient.weight or None,
         "height": patient.height or None,

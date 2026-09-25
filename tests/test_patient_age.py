@@ -26,6 +26,15 @@ class PatientAgeTest(unittest.TestCase):
         self.assertEqual(_patient_payload(without_age, date(2023, 11, 24))["age"], 54)
         self.assertIsNone(_patient_payload(without_age)["age"])
 
+    def test_payload_flags_only_calculated_age(self):
+        with_age = Patient(name="Paciente", age=47, sex="Masculino", weight=0, height=0, bmi=0, birth_date="08/07/1977")
+        without_age = Patient(name="Paciente", age=0, sex="Masculino", weight=0, height=0, bmi=0, birth_date="20/02/1969")
+        without_anything = Patient(name="Paciente", age=0, sex="Masculino", weight=0, height=0, bmi=0, birth_date=None)
+
+        self.assertFalse(_patient_payload(with_age, date(2030, 1, 1))["age_calculated"])
+        self.assertTrue(_patient_payload(without_age, date(2023, 11, 24))["age_calculated"])
+        self.assertFalse(_patient_payload(without_anything, date(2023, 11, 24))["age_calculated"])
+
 
 if __name__ == "__main__":
     unittest.main()
