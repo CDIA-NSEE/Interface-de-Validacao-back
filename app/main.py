@@ -1,10 +1,11 @@
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+import gzip
 import os
 import re
-from typing import Optional
+from typing import Annotated, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import desc
 from sqlmodel import Session, select
@@ -1021,11 +1022,22 @@ def save_exam_draft(
     return _exam_payload(session, exam, include_details=True, current_user=current_user)
 
 
+COMPRESSED_IMAGE_TYPES = {"image/png", "image/jpeg"}
+
+
+def _accepts_gzip(accept_encoding: str | None) -> bool:
+    if not accept_encoding:
+        return False
+    codings = {part.split(";")[0].strip().lower() for part in accept_encoding.split(",")}
+    return "gzip" in codings
+
+
 @app.get("/exams/{exam_id}/image", response_model=None)
 def get_exam_image(
     exam_id: int,
     current_user: User = Depends(get_current_active_user),
     session: Session = Depends(get_session),
+    accept_encoding: Annotated[str | None, Header()] = None,
 ):
     exam = _get_exam_or_404(session, exam_id)
     image = load_metadata_image(exam.metadata_id)
@@ -1035,11 +1047,13 @@ def get_exam_image(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Imagem do ECG não encontrada.",
         )
-    return Response(
-        content=image["content"],
-        media_type=image["media_type"],
-        headers={"Cache-Control": "private, max-age=3600"},
-    )
+    content = image["content"]
+    headers = {"Cache-Control": "private, max-age=3600", "Vary": "Accept-Encoding"}
+    # O traçado vem como BMP sem compressão (~2,2 MB); com gzip cai para ~0,7 MB.
+    if image["media_type"] not in COMPRESSED_IMAGE_TYPES and _accepts_gzip(accept_encoding):
+        content = gzip.compress(content, compresslevel=6, mtime=0)
+        headers["Content-Encoding"] = "gzip"
+    return Response(content=content, media_type=image["media_type"], headers=headers)
 
 
 @app.get("/diagnosis-options")

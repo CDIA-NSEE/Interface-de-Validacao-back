@@ -1,4 +1,5 @@
 from datetime import date
+import gzip
 import unittest
 from unittest.mock import patch
 
@@ -61,6 +62,37 @@ class ExamImageTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.body, image["content"])
         self.assertEqual(response.media_type, "image/bmp")
+        self.assertNotIn("content-encoding", response.headers)
+
+    def test_compresses_the_bitmap_with_gzip_when_the_client_accepts_it(self):
+        image = {"content": b"BM" + b"\x00" * 4096, "media_type": "image/bmp"}
+
+        with Session(self.engine) as session, patch("app.main.load_metadata_image", return_value=image):
+            response = get_exam_image(
+                self.exam_id,
+                current_user=self.user,
+                session=session,
+                accept_encoding="gzip, deflate, br, zstd",
+            )
+
+        self.assertEqual(response.headers["content-encoding"], "gzip")
+        self.assertEqual(response.headers["vary"], "Accept-Encoding")
+        self.assertLess(len(response.body), len(image["content"]))
+        self.assertEqual(gzip.decompress(response.body), image["content"])
+
+    def test_does_not_recompress_png_images(self):
+        image = {"content": b"\x89PNG" + b"\x00" * 4096, "media_type": "image/png"}
+
+        with Session(self.engine) as session, patch("app.main.load_metadata_image", return_value=image):
+            response = get_exam_image(
+                self.exam_id,
+                current_user=self.user,
+                session=session,
+                accept_encoding="gzip",
+            )
+
+        self.assertEqual(response.body, image["content"])
+        self.assertNotIn("content-encoding", response.headers)
 
     def test_responds_404_instead_of_a_sample_ecg_when_there_is_no_image(self):
         with Session(self.engine) as session, patch("app.main.load_metadata_image", return_value=None):
