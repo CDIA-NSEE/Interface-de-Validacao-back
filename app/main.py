@@ -6,7 +6,6 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
 from sqlalchemy import desc
 from sqlmodel import Session, select
 
@@ -1030,13 +1029,17 @@ def get_exam_image(
 ):
     exam = _get_exam_or_404(session, exam_id)
     image = load_metadata_image(exam.metadata_id)
-    if image:
-        return Response(
-            content=image["content"],
-            media_type=image["media_type"],
-            headers={"Cache-Control": "private, max-age=3600"},
+    if not image:
+        # Sem traçado real não há o que validar: nunca devolver um ECG de exemplo no lugar.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Imagem do ECG não encontrada.",
         )
-    return RedirectResponse(url=exam.image_url or "/sample-ecg.svg")
+    return Response(
+        content=image["content"],
+        media_type=image["media_type"],
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
 
 
 @app.get("/diagnosis-options")
