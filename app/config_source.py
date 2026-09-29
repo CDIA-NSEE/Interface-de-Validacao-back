@@ -291,11 +291,12 @@ def active_validation_context(today: date | None = None) -> dict:
 
 
 def load_support_contact() -> dict:
+    # Sem canais, a interface mostra o próprio aviso ("Canal oficial pendente de configuração."); uma descrição aqui
+    # repetiria o aviso. Não listar lembretes como canal: o médico os lê como um contato real.
     data = _load_json(
         "support_contact.json",
         {
             "title": "Contato BP/NSEE",
-            "description": "Canais oficiais de suporte ainda pendentes de configuracao.",
             "channels": [],
         },
     )
